@@ -23,4 +23,9 @@
 4. to monitor, open the platform io sidebar and click "monitor".
 
 
-written by carl sept 20 2025. 
+written by carl sept 20 2025.
+
+# main.cpp notes
+
+prob: EKF class fronts a ton of stack allocations when generating temporary matrix copies for matrix operations.
+sol:  
