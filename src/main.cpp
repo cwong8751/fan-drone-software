@@ -8,6 +8,7 @@
 #define RGB_pin 48
 #define SDA_pin 8
 #define SCL_pin 9
+#define BAUD_RATE 115200
 
 MPU9250 mpu;
 EKF ekf(0.01f); // 100 Hz sample rate
@@ -22,14 +23,14 @@ void setrgb(uint8_t red, uint8_t green, uint8_t blue){
 }
 
 void setup() {
-    Serial.begin(115200); // start serial comm at baud rate 115200 for USB
+    Serial.begin(BAUD_RATE); // start serial comm at baud rate 115200 for USB
 
     Serial.println("Initializing peripherals...\n\n");
 
     Serial.println("Initializing I2C0 bus interface...");
 
     // intilialize first i2c bus to 8 (SDA) and 9 (SCL)  
-    Wire.begin(8, 9);
+    Wire.begin(SDA_pin, SCL_pin);
     Wire.setClock(400000); // 400kHz fast mode with MPU9250
     
     Serial.println("OK.\n");
