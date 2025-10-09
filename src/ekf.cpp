@@ -26,6 +26,16 @@ EKF::EKF(float dt_) : dt(dt_) {
 
 // =============================
 // PREDICTION STEP (gyro input)
+// 
+// the EKF algorithm takes in our raw gyro measurements and quaternion state vector as input to make a prediction on the drone's orientation.
+//
+// in this function we predict the quaternion at step k of our EKF algorithm
+//
+// F matrix    -> state transition matrix
+// P matrix    -> process noise matrix
+// Q matrix    -> measurement noise matrix
+// gyro matrix -> control vector
+// x matrix    -> state vector
 // =============================
 
 void EKF::predict(const Matrix<3>& gyro) {
@@ -33,6 +43,7 @@ void EKF::predict(const Matrix<3>& gyro) {
     float gy    =   gyro(1);
     float gz    =   gyro(2);
 
+    // find the Jacobian of our nonlinear function using omega matrix at step k 
     // build our omega matrix (wacky way of initializing this matrix atm)
     BLA::Matrix<4,4> Omega;
     Omega(0,0) = 0.0f;  Omega(0,1) = -gx;   Omega(0,2) = -gy;   Omega(0,3) = -gz;
@@ -40,12 +51,14 @@ void EKF::predict(const Matrix<3>& gyro) {
     Omega(2,0) = gy;    Omega(2,1) = -gz;   Omega(2,2) = 0.0f;  Omega(2,3) = gx;
     Omega(3,0) = gz;    Omega(3,1) = gy;    Omega(3,2) = -gx;   Omega(3,3) = 0.0f;
 
-    Matrix<4> q = { x(0), x(1), x(2), x(3) }; // current quaternion
-    q(0) = x(0); q(1) = x(1); q(2) = x(2); q(3) = x(3);
+    // grab our current quaternion (quaternion at step k-1)
+    Matrix<4> q = { x(0), x(1), x(2), x(3) }; // current quaternion -> q_k-1 = [q_w, q_x, q_y, q_z]
+    //q(0) = x(0); q(1) = x(1); q(2) = x(2); q(3) = x(3); <-- same thing twice?
 
-    // integrate quaternion rate
-    Matrix<4> dq = Omega * q;
-    for (int i = 0; i < 4; i++) q(i) += 0.5f * dq(i) * dt;
+    // find F to represent our Jacobian of our nonlinear function 
+    // omega matrix (4x4) * q_k-1 (4x1) * 0.5 = q_dot (4x1)
+    Matrix<4> q_dot = Omega * q;
+    for (int i = 0; i < 4; i++) q_dot(i) += 0.5f;
 
     // normalize quaternion
     float norm = sqrtf(q(0)*q(0) + q(1)*q(1) + q(2)*q(2) + q(3)*q(3));
