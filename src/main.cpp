@@ -67,7 +67,7 @@ void loop() {
 
         // EKF algorithm steps
         ekf.predict(gyro);
-        ekf.update(accel, mag);
-        ekf.normalizeQuaternion();
+        //ekf.update(accel, mag);
+        //ekf.normalizeQuaternion();
     }
 }
