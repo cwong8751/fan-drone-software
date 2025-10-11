@@ -31,6 +31,12 @@ EKF::EKF(float dt_) : dt(dt_) {
 //
 // in this function we predict the quaternion at step k of our EKF algorithm
 //
+// ***NOTE***
+// merhaps we can hardcode the derived result for q_predict from resource: 
+//      https://ahrs.readthedocs.io/en/latest/filters/ekf.html#prediction-step
+//
+// ***NOTE***
+//
 // F matrix    -> state transition matrix
 // P matrix    -> process noise matrix
 // Q matrix    -> measurement noise matrix
@@ -57,8 +63,8 @@ void EKF::predict(const Matrix<3>& gyro) {
 
     // find F to represent our Jacobian of our nonlinear function 
     // omega matrix (4x4) * q_k-1 (4x1) * 0.5 = q_dot (4x1)
-    Matrix<4> q_dot = Omega * q;
-    for (int i = 0; i < 4; i++) q_dot(i) += 0.5f;
+    Matrix<4> q_dot = 0.5f * Omega * q;
+    //for (int i = 0; i < 4; i++) q_dot(i) += 0.5f;
 
     // normalize quaternion
     float norm = sqrtf(q(0)*q(0) + q(1)*q(1) + q(2)*q(2) + q(3)*q(3));
@@ -76,13 +82,16 @@ void EKF::predict(const Matrix<3>& gyro) {
 
 // =============================
 // UPDATE STEP 
+//
+// use accelerometer and magnetometer raw values to correct our prediction with gyro input.
+//
 // =============================
 void EKF::update(const BLA::Matrix<3>& accel, const BLA::Matrix<3>& mag) {
     // normalize sensor readings 
     BLA::Matrix<3> a = accel / sqrt(accel(0)*accel(0) + accel(1)*accel(1) + accel(2)*accel(2));
     BLA::Matrix<3> m = mag   / sqrt(mag(0)*mag(0)     + mag(1)*mag(1)     + mag(2)*mag(2));
 
-    // get rotation matrix from quaternion
+    // get rotation matrix from quaternion at step k 
     float q0 = x(0), q1 = x(1), q2 = x(2), q3 = x(3);
     BLA::Matrix<3,3> Rb2w;
     Rb2w(0,0) = q0*q0 + q1*q1 - q2*q2 - q3*q3;
@@ -105,7 +114,7 @@ void EKF::update(const BLA::Matrix<3>& accel, const BLA::Matrix<3>& mag) {
     for (int i = 0; i < 3; i++) z(i) = a(i) - g_pred(i);
     for (int i = 0; i < 3; i++) z(i+3) = m(i) - m_pred(i);
 
-    P = P + R * 0.01f;
+    //P = P + R * 0.01f;
 }
 
 void EKF::normalizeQuaternion() {
