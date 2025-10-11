@@ -39,7 +39,7 @@ EKF::EKF(float dt_) : dt(dt_) {
 // =============================
 
 void EKF::predict(const Matrix<3>& gyro) {
-    float gx    =   gyro(0);
+    float gx    =   gyro(0); 
     float gy    =   gyro(1);
     float gz    =   gyro(2);
 
@@ -57,21 +57,28 @@ void EKF::predict(const Matrix<3>& gyro) {
 
     // find F to represent our Jacobian of our nonlinear function 
     // omega matrix (4x4) * q_k-1 (4x1) * 0.5 = q_dot (4x1)
-    Matrix<4> q_dot = Omega * q;
-    for (int i = 0; i < 4; i++) q_dot(i) += 0.5f;
+    Matrix<4> q_dot = 0.5f * (Omega * q);
+    //for (int i = 0; i < 4; i++) q_dot(i) += 0.5f;
 
-    // normalize quaternion
-    float norm = sqrtf(q(0)*q(0) + q(1)*q(1) + q(2)*q(2) + q(3)*q(3));
+    Matrix<4> q_next = q + q_dot * dt;
+    
+    // normalize quaternion updated quaternion
+    float norm = sqrtf(q_next(0)*q_next(0) + q_next(1)*q_next(1) + q_next(2)*q_next(2) + q_next(3)*q_next(3));
     if (norm > 1e-12f)
     {
         for (int i = 0; i < 4; i++) q(i) /= norm;
     }
 
-    // update state
-    x(0) = q(0); x(1) = q(1); x(2) = q(2); x(3) = q(3);
+    // store updated quaternion
+    x(0) = q_next(0); x(1) = q_next(1); x(2) = q_next(2); x(3) = q_next(3);
 
     // propagate covariance
-    P = P + Q * dt; 
+    //P = P + Q * dt;
+
+    Matrix<7,7> F;
+    F.Fill(0.0f);
+    for (int i = 0; i < 7; i++) F(i, i) = 1.0f;
+    P = F * P * (~F) + Q;
 }
 
 // =============================
@@ -96,12 +103,12 @@ void EKF::update(const BLA::Matrix<3>& accel, const BLA::Matrix<3>& mag) {
     Rb2w(2,2) = q0*q0 - q1*q1 - q2*q2 + q3*q3;
 
     // predicted gravity and magnetic north in body frame
-    BLA::Matrix<3> g_pred = Rb2w * BLA::Matrix<3>{0.0f, 0.0f, -1.0f};
-    BLA::Matrix<3> m_pred = Rb2w * BLA::Matrix<3>{1.0f, 0.0f, 0.0f};
+    Matrix<3> g_pred = Rb2w * BLA::Matrix<3>{0.0f, 0.0f, -1.0f};
+    Matrix<3> m_pred = Rb2w * BLA::Matrix<3>{1.0f, 0.0f, 0.0f};
 
 
     // measurement residual 
-    BLA::Matrix<6> z;
+    Matrix<6> z;
     for (int i = 0; i < 3; i++) z(i) = a(i) - g_pred(i);
     for (int i = 0; i < 3; i++) z(i+3) = m(i) - m_pred(i);
 
