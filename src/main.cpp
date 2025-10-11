@@ -1,4 +1,4 @@
-#include "ekf.h"
+//#include "ekf.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <MPU9250.h>
@@ -11,7 +11,7 @@
 #define BAUD_RATE 115200
 
 MPU9250 mpu;
-EKF ekf(0.01f); // 100 Hz sample rate
+//EKF ekf(0.01f); // 100 Hz sample rate
 
 BLA::Matrix<3> gyro;
 BLA::Matrix<3> accel;
@@ -65,9 +65,29 @@ void loop() {
         accel = {  mpu.getAccX(),  mpu.getAccY(),  mpu.getAccZ()  };
         mag   = {  mpu.getMagX(),  mpu.getMagY(),  mpu.getMagZ()  };
 
-        // EKF algorithm steps
+        float roll = gyro(0);
+        float pitch = gyro(1);
+        float yaw = gyro(2);
+
+        //Serial.printf("roll: %f, pitch: %f, yaw: %f", roll, pitch, yaw);
+        Serial.print("roll:");
+        Serial.print(roll);
+        Serial.print(",");
+        Serial.print("pitch:");
+        Serial.print(pitch);
+        Serial.print(",");
+        Serial.print("yaw:");
+        Serial.println(yaw);
+
+
+        //delay(1000);
+
+        // EKF algorithm steps (see ekf.cpp for details)
+        
         ekf.predict(gyro);
-        //ekf.update(accel, mag);
-        //ekf.normalizeQuaternion();
+        /*
+        ekf.update(accel, mag);
+        ekf.normalizeQuaternion();
+        */
     }
 }
