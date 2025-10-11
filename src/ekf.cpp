@@ -45,7 +45,7 @@ void EKF::predict(const Matrix<3>& gyro) {
 
     // find the Jacobian of our nonlinear function using omega matrix at step k 
     // build our omega matrix (wacky way of initializing this matrix atm)
-    BLA::Matrix<4,4> Omega;
+    Matrix<4,4> Omega;
     Omega(0,0) = 0.0f;  Omega(0,1) = -gx;   Omega(0,2) = -gy;   Omega(0,3) = -gz;
     Omega(1,0) = gx;    Omega(1,1) = 0.0f;  Omega(1,2) = gz;    Omega(1,3) = -gy;
     Omega(2,0) = gy;    Omega(2,1) = -gz;   Omega(2,2) = 0.0f;  Omega(2,3) = gx;
@@ -79,12 +79,12 @@ void EKF::predict(const Matrix<3>& gyro) {
 // =============================
 void EKF::update(const BLA::Matrix<3>& accel, const BLA::Matrix<3>& mag) {
     // normalize sensor readings 
-    BLA::Matrix<3> a = accel / sqrt(accel(0)*accel(0) + accel(1)*accel(1) + accel(2)*accel(2));
-    BLA::Matrix<3> m = mag   / sqrt(mag(0)*mag(0)     + mag(1)*mag(1)     + mag(2)*mag(2));
+    Matrix<3> a = accel / sqrt(accel(0)*accel(0) + accel(1)*accel(1) + accel(2)*accel(2));
+    Matrix<3> m = mag   / sqrt(mag(0)*mag(0)     + mag(1)*mag(1)     + mag(2)*mag(2));
 
     // get rotation matrix from quaternion
     float q0 = x(0), q1 = x(1), q2 = x(2), q3 = x(3);
-    BLA::Matrix<3,3> Rb2w;
+    Matrix<3,3> Rb2w;
     Rb2w(0,0) = q0*q0 + q1*q1 - q2*q2 - q3*q3;
     Rb2w(0,1) = 2*(q1*q2 - q0*q3);
     Rb2w(0,2) = 2*(q1*q3 + q0*q2);
