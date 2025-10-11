@@ -25,7 +25,26 @@
 
 written by carl sept 20 2025.
 
-# main.cpp notes
+# EKF notes
 
-prob: EKF class fronts a ton of stack allocations when generating temporary matrix copies for matrix operations.
-sol:  
+Initialization:
+  x₀ = [1, 0, 0, 0, 0, 0, 0]ᵀ
+  P₀ = small diagonal matrix
+  Q, R = tuned process/measurement noise matrices
+
+For each time step:
+  1. Read IMU data (gyro, accel, mag)
+  2. PREDICT:
+       - compute q_dot = 0.5 * Ω(gyro - bias) * q
+       - integrate: q += q_dot * dt
+       - normalize q
+       - propagate P = F P Fᵀ + Q
+  3. UPDATE:
+       - normalize accel, mag
+       - compute predicted gravity & magnetic field
+       - compute residual y = z_meas - z_pred
+       - compute H, K, and apply x ← x + K y
+       - normalize quaternion
+  4. Output current quaternion estimate
+
+also need to tune Q and R parameters. bias might be optional actually.
