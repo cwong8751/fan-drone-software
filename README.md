@@ -105,3 +105,24 @@ These measurements are not precise or stable enough to reliably be used in the c
 
 The algorithm will essentially estimate the 3D orientation of our monocopter using the sensor fusion of our MPU9250's gyroscope, accelerometer, and magnetometer. Our algorithm is quaternion-based, meaning the quaternion representing our body frame in reference to our inertial frame will be what estimate's our orientation specifically; this comes with the advantages of avoiding gimbal lock (losing a degree of freedom) and smooth attitude propogation.
 
+
+## carl notes oct 16
+This probably is quite similar to what we're doing (but answers given was to use a low-pass instead): https://robotics.stackexchange.com/questions/12633/extended-kalman-filter-for-imu
+
+
+This example illustrates a MEKF example: https://matthewhampsey.github.io/blog/2020/07/18/mekf
+
+This example gives the complete math to implement a EKF for the mpu9250 sensor: https://www.sikhrobotics.com/orientation/ekf/implementation/
+
+This example gives the full math to implement a kalman filter: https://blog.tkjelectronics.dk/2012/09/a-practical-approach-to-kalman-filter-and-how-to-implement-it/
+
+This is the code for the blog link above: https://github.com/TKJElectronics/KalmanFilter
+
+This might be the most use for us: https://github.com/simondlevy/TinyEKF
+
+TinyEKF is a full blown library and it seems to be doing what we want it to do, we just need to declare the model and 
+feed the values in. 
+
+This is another similar implementation but inspired by EKF, not exactly an EKF algorithm: https://x-io.co.uk/open-source-imu-and-ahrs-algorithms/
+
+by carl
