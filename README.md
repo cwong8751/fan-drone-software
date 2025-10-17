@@ -97,7 +97,7 @@ So far we are reading raw gyroscopic measurements as the angular rate in RPY dir
 
 Below is a video demonstrating these measurements from our sensor at rest, along with added noise (slight vibrations from me tapping around the sensor).
 
-<video src="noise.mp4" width="320" height="240" controls></video>
+https://github.com/user-attachments/assets/525c6bad-1055-40c2-8811-ee5575128f10
 
 These measurements are not precise or stable enough to reliably be used in the control loops of our flight controller. For example, if we assume a constant angular rate in either of the RPY directions while our sensor is at rest, the error accumulated from such noise will have a significant impact on the flight stability of our monocopter. So, we're going to be implementing an quaternion-based Extended Kalman Filter (EKF) algorithm to minimize noise/disturbance in our sensor accuracy.  
 
