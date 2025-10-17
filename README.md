@@ -88,3 +88,20 @@ Written by Richard
 4. Then open serial plotter, if values dont show, go to "Tools" > "Serial Plotter", values should start showing up soon. 
 
 Richard and Carl Oct 11.
+
+## Notes Oct 16 Reading raw sensor measurements with noise
+
+### Problems with the raw MPU9250 sensor measurements
+
+So far we are reading raw gyroscopic measurements as the angular rate in RPY directions from our MPU9250 IMU sensor in rad/s.
+
+Below is a video demonstrating these measurements from our sensor at rest, along with added noise (slight vibrations from me tapping around the sensor).
+
+<video src="noise.mp4" width="320" height="240" controls></video>
+
+These measurements are not precise or stable enough to reliably be used in the control loops of our flight controller. For example, if we assume a constant angular rate in either of the RPY directions while our sensor is at rest, the error accumulated from such noise will have a significant impact on the flight stability of our monocopter. So, we're going to be implementing an quaternion-based Extended Kalman Filter (EKF) algorithm to minimize noise/disturbance in our sensor accuracy.  
+
+### Quaternion-Based EKF Algorithm
+
+The algorithm will essentially estimate the 3D orientation of our monocopter using the sensor fusion of our MPU9250's gyroscope, accelerometer, and magnetometer. Our algorithm is quaternion-based, meaning the quaternion representing our body frame in reference to our inertial frame will be what estimate's our orientation specifically; this comes with the advantages of avoiding gimbal lock (losing a degree of freedom) and smooth attitude propogation.
+
