@@ -55,32 +55,68 @@ void loop(){
           // if the current line is blank, you got two newline characters in a row.
           // that's the end of the client HTTP request, so send a response:
           if (currentLine.length() == 0) {
-            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
-            // and a content-type so the client knows what's coming, then a blank line:
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-type:text/html");
-            client.println("Connection: close");
-            client.println();
-            
-            // Display the HTML web page
-            client.println("<!DOCTYPE html><html>");
-            client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-            client.println("<link rel=\"icon\" href=\"data:,\">");
-            // CSS to style the on/off buttons 
-            // Feel free to change the background-color and font-size attributes to fit your preferences
-            client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
-            client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
-            client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
-            client.println(".button2 {background-color: #555555;}</style></head>");
-            
-            // Web Page Heading
-            client.println("<body><h1>ESP32 Web Server</h1>");
-            client.println("</body></html>");
-            
-            // The HTTP response ends with another blank line
-            client.println();
-            // Break out of the while loop
-            break;
+            if (header.indexOf("GET /data") >= 0) {
+              //todo: update roll/pitch/yaw 
+
+              client.println("HTTP/1.1 200 OK");
+              client.println("Content-type: application/json");
+              client.println("Connection: close");
+              client.println();
+              client.print("{\"roll\":");
+              client.print("replace with actual value");
+              client.print(",\"pitch\":");
+              client.print("replace with actual value");
+              client.print(",\"yaw\":");
+              client.print("replace with actual value");
+              client.println("}");
+              client.println();
+              break;
+            }
+            else {
+              client.println("HTTP/1.1 200 OK");
+              client.println("Content-type:text/html");
+              client.println("Connection: close");
+              client.println();
+              client.println("<!DOCTYPE html><html>");
+              client.println("<head>");
+              client.println("<meta name='viewport' content='width=device-width, initial-scale=1'>");
+              client.println("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>");
+              client.println("<style>");
+              client.println("body { font-family: Helvetica; text-align: center; margin: 20px; }");
+              client.println("canvas { max-width: 100%; height: auto; }");
+              client.println("</style>");
+              client.println("</head>");
+              client.println("<body>");
+              client.println("<h1>ESP32 Orientation Plot</h1>");
+              client.println("<canvas id='chart' width='400' height='200'></canvas>");
+              client.println("<script>");
+              client.println("const ctx = document.getElementById('chart').getContext('2d');");
+              client.println("const chart = new Chart(ctx, {type: 'line', data: {");
+              client.println("labels: [], datasets: [");
+              client.println("{label:'Roll', borderColor:'red', fill:false, data:[]},");
+              client.println("{label:'Pitch', borderColor:'green', fill:false, data:[]},");
+              client.println("{label:'Yaw', borderColor:'blue', fill:false, data:[]}");
+              client.println("]}, options: {");
+              client.println("responsive: true, animation: false,");
+              client.println("scales: {y: {min:-180, max:180, title:{display:true, text:'Degrees'}}}");
+              client.println("}});");
+              client.println("function fetchData(){fetch('/data').then(r=>r.json()).then(d=>{");
+              client.println("const t = new Date().toLocaleTimeString();");
+              client.println("chart.data.labels.push(t);");
+              client.println("chart.data.datasets[0].data.push(d.roll);");
+              client.println("chart.data.datasets[1].data.push(d.pitch);");
+              client.println("chart.data.datasets[2].data.push(d.yaw);");
+              client.println("if(chart.data.labels.length>50){");
+              client.println("chart.data.labels.shift();");
+              client.println("chart.data.datasets.forEach(s=>s.data.shift());}");
+              client.println("chart.update();");
+              client.println("});}");
+              client.println("setInterval(fetchData, 500);");  // update every 0.5 sec
+              client.println("</script>");
+              client.println("</body></html>");
+              client.println();
+              break;
+            }
           } else { // if you got a newline, then clear currentLine
             currentLine = "";
           }
