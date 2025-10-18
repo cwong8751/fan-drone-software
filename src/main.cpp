@@ -99,7 +99,7 @@ void updateServer()
                             client.print(",\"pitch\":");
                             client.print(pitch);
                             client.print(",\"yaw\":");
-                            client.print("replace with actual value");
+                            client.print(0);
                             client.println("}");
                             client.println();
                             break;
@@ -267,6 +267,10 @@ void loop()
         Serial.print(",");
         Serial.print("pitch:");
         Serial.println(cf.getPitch());
+
+        // set update
+        roll = cf.getRoll();
+        pitch = cf.getPitch();
 
         /*
         float roll = gx;
