@@ -12,6 +12,9 @@
 #define BAUD_RATE 115200
 #define ALPHA 0.98f
 #define DT 0.01f
+#define GX_BIAS 2.50f
+#define GY_BIAS -4.65f
+#define GZ_BIAS -1.13f
 
 // filtered angles
 float roll = 0.0f;
@@ -88,21 +91,19 @@ void setup() {
     Serial.println(gz_bias);
 
     // embed gyro biases to calculations
-    // Biases: 2.55, -4.69, -1.09
-
-    while (true)
-    {
-        delay(1);
-    }
+    // trial 1: 2.55, -4.69, -1.09
+    // trial 2: 2.46, -4.62, -1.17
+    // trial 3: 2.49, -4.65, -1.13
+    // avg: gx bias of 2.50, gy bias of -4.65, gz bias of -1.13
 }
 
 void loop() {
     if (mpu.update()) {
 
         // extract raw gyro and accel data from MPU9250
-        float gx = mpu.getGyroX();
-        float gy = mpu.getGyroY();
-        float gz = mpu.getGyroZ();
+        float gx = mpu.getGyroX() - GX_BIAS;
+        float gy = mpu.getGyroY() - GY_BIAS;
+        float gz = mpu.getGyroZ() - GZ_BIAS;
 
         float ax = mpu.getAccX();
         float ay = mpu.getAccY();
@@ -110,13 +111,12 @@ void loop() {
 
         cf.update(gx, gy, gz, ax, ay, az, DT);
 
-        Serial.print("Roll:");
-        Serial.print(cf.getRoll(), 2);
-        Serial.print("\tPitch:");
-        Serial.println(cf.getPitch(), 2);
-
-        delay(10);
-
+        Serial.print("roll:");
+        Serial.print(cf.getRoll());
+        Serial.print(",");
+        Serial.print("pitch:");
+        Serial.println(cf.getPitch());
+        
         /*
         float roll = gx;
         float pitch = gy;
@@ -131,5 +131,7 @@ void loop() {
         Serial.print("yaw:");
         Serial.println(yaw);
         */
+
+        delay(10);
     }
 }

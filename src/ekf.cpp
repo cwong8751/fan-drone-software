@@ -83,7 +83,7 @@ void EKF::predict(const Matrix<3>& gyro) {
 
     Matrix<7,7> F;
     F.Fill(0.0f);
-    for (int i = 0; i < 7; i++) F(i, i) = 1.0f;
+    //for (int i = 0; i < 7; i++) F(i, i) = 1.0f;
     P = F * P * (~F) + Q;
 }
 
