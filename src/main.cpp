@@ -1,21 +1,28 @@
 //#include "ekf.h"
+#include "cf.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <MPU9250.h>
-#include <BasicLinearAlgebra.h>
 #include <cmath>
 
+// constants
 #define RGB_pin 48
 #define SDA_pin 8
 #define SCL_pin 9
 #define BAUD_RATE 115200
+#define ALPHA 0.98f
+#define DT 0.01f
+
+// filtered angles
+float roll = 0.0f;
+float pitch = 0.0f;
+
+// raw sensor values
+float ax, ay, az;
+float gx, gy, gz;
 
 MPU9250 mpu;
-//EKF ekf(0.01f); // 100 Hz sample rate
-
-BLA::Matrix<3> gyro;
-BLA::Matrix<3> accel;
-BLA::Matrix<3> mag;
+CF cf(ALPHA);
 
 // helper function for LEDs indicating FC status 
 void setrgb(uint8_t red, uint8_t green, uint8_t blue){
@@ -33,7 +40,7 @@ void setup() {
     Wire.begin(SDA_pin, SCL_pin);
     Wire.setClock(400000); // 400kHz fast mode with MPU9250
     
-    Serial.println("OK.\n");
+    Serial.print("OK.\n");
     
     Serial.println("Initializing MPU9250 sensor...");
 
@@ -44,32 +51,77 @@ void setup() {
         while (1) delay(100);
     }
     
-    Serial.println("OK.\n");
+    Serial.print("OK.\n");
 
     Serial.println("Calibrating gyro, accel, and mag sensors...");
 
     // calibrate sensors (assumes device is stationary, optional in the future)
     mpu.calibrateAccelGyro();
-    mpu.calibrateMag();
 
-    Serial.println("OK.\n");
+    Serial.print("GYRO/ACCEL OK...");
+
+    mpu.calibrateMag();
+    delay(3000);
+
+    Serial.print("OK.\n");
     
     setrgb(0, 255, 0);  
+
+    Serial.println("gyro bias calculation...");
+
+    float gx_bias = 0, gy_bias = 0, gz_bias = 0;
+    for (int i = 0; i < 500; i++) {
+        mpu.update_accel_gyro();
+        gx_bias += mpu.getGyroX();
+        gy_bias += mpu.getGyroY();
+        gz_bias += mpu.getGyroZ();
+        delay(2);
+    }
+    gx_bias /= 500; gy_bias /= 500; gz_bias /= 500;
+
+    Serial.print("OK");
+
+    Serial.println();
+    Serial.print("Biases: ");
+    Serial.print(gx_bias); Serial.print(", ");
+    Serial.print(gy_bias); Serial.print(", ");
+    Serial.println(gz_bias);
+
+    // embed gyro biases to calculations
+    // Biases: 2.55, -4.69, -1.09
+
+    while (true)
+    {
+        delay(1);
+    }
 }
 
 void loop() {
     if (mpu.update()) {
 
-        // extract raw gyro, accel, and mag data from mpu 
-        gyro  = {  mpu.getGyroX(), mpu.getGyroY(), mpu.getGyroZ() };
-        accel = {  mpu.getAccX(),  mpu.getAccY(),  mpu.getAccZ()  };
-        mag   = {  mpu.getMagX(),  mpu.getMagY(),  mpu.getMagZ()  };
+        // extract raw gyro and accel data from MPU9250
+        float gx = mpu.getGyroX();
+        float gy = mpu.getGyroY();
+        float gz = mpu.getGyroZ();
 
-        float roll = gyro(0);
-        float pitch = gyro(1);
-        float yaw = gyro(2);
+        float ax = mpu.getAccX();
+        float ay = mpu.getAccY();
+        float az = mpu.getAccZ();
 
-        //Serial.printf("roll: %f, pitch: %f, yaw: %f", roll, pitch, yaw);
+        cf.update(gx, gy, gz, ax, ay, az, DT);
+
+        Serial.print("Roll:");
+        Serial.print(cf.getRoll(), 2);
+        Serial.print("\tPitch:");
+        Serial.println(cf.getPitch(), 2);
+
+        delay(10);
+
+        /*
+        float roll = gx;
+        float pitch = gy;
+        float yaw = gz;
+
         Serial.print("roll:");
         Serial.print(roll);
         Serial.print(",");
@@ -78,16 +130,6 @@ void loop() {
         Serial.print(",");
         Serial.print("yaw:");
         Serial.println(yaw);
-
-
-        //delay(1000);
-
-        // EKF algorithm steps (see ekf.cpp for details)
-        
-        ekf.predict(gyro);
-        /*
-        ekf.update(accel, mag);
-        ekf.normalizeQuaternion();
         */
     }
 }
