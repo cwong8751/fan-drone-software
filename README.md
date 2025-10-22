@@ -62,23 +62,6 @@ written by carl sept 20 2025.
 
 Richard and Carl Oct 11.
 
-## Notes Oct 16 Reading raw sensor measurements with noise
-
-### Problems with the raw MPU9250 sensor measurements
-
-So far we are reading raw gyroscopic measurements as the angular rate in RPY directions from our MPU9250 IMU sensor in rad/s.
-
-Below is a video demonstrating these measurements from our sensor at rest, along with added noise (slight vibrations from me tapping around the sensor).
-
-https://github.com/user-attachments/assets/525c6bad-1055-40c2-8811-ee5575128f10
-
-These measurements are not precise or stable enough to reliably be used in the control loops of our flight controller. For example, if we assume a constant angular rate in either of the RPY directions while our sensor is at rest, the error accumulated from such noise will have a significant impact on the flight stability of our monocopter. So, we're going to be implementing an quaternion-based Extended Kalman Filter (EKF) algorithm to minimize noise/disturbance in our sensor accuracy.  
-
-### Quaternion-Based EKF Algorithm
-
-The algorithm will essentially estimate the 3D orientation of our monocopter using the sensor fusion of our MPU9250's gyroscope, accelerometer, and magnetometer. Our algorithm is quaternion-based, meaning the quaternion representing our body frame in reference to our inertial frame will be what estimate's our orientation specifically; this comes with the advantages of avoiding gimbal lock (losing a degree of freedom) and smooth attitude propogation.
-
-
 ## carl notes oct 16
 This probably is quite similar to what we're doing (but answers given was to use a low-pass instead): https://robotics.stackexchange.com/questions/12633/extended-kalman-filter-for-imu
 
@@ -99,3 +82,16 @@ feed the values in.
 This is another similar implementation but inspired by EKF, not exactly an EKF algorithm: https://x-io.co.uk/open-source-imu-and-ahrs-algorithms/
 
 by carl
+
+## Oct 22 Notes
+
+I've collected time measurements on gathering orientation estimates from our MPU 9250. On average, updating registers and estimating orientation takes ~211us which is ideal if we're shooting for a control loop period of less than 1kHz (1000us). Also, since I haven't posted it yet, here is a video visualizing the RPY orientation of our sensor at a moderate sample rate (note its not perfect since its my hand and not a testing rig).
+
+https://github.com/user-attachments/assets/7d2adfda-667f-469d-be9e-9518fe9fe755
+
+Here are some other changes in our flight controller approach:
++ switched to using the MPU library sensor fusion algorithm (mahony filter) as its simpler, just as accurate/fast as our comlementary filter, and more appropriate for a first prototype.
++ designed the structure of our flight controller firmware to run off two cores: one core for control, another for reporting. these cores share a state structure of our flight controller, accessible via semaphore.
++ began outlining a cascaded PID control loop with a gryo-rate based inner loop and gyro-angle based outer loop. perhaps a single PID control loop for yaw as well.
+
+Richard 
