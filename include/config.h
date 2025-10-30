@@ -1,14 +1,20 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+// ===== RETURN CODES =====
+#define SUCCESS 0
+#define FAILURE -1
+
+
 // ===== HARDWARE PINS =====
 // -- MPU9250 --
 #define SDA_PIN 8
 #define SCL_PIN 9
-#define I2C_FREQ 1000000 // 1MHz sensor clock speed
+#define I2C_FREQ 400000 // 400kHz sensor clock speed (MAX)
 
-// -- LED --
+// -- MISC --
 #define RGB_pin 48
+#define BAUD_RATE 115200
 
 // ===== CONTROL LOOP TIMING =====
 #define RATE_LOOP_HZ 250  // inner loop (gyro rate feedback)
