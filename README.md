@@ -44,3 +44,16 @@ Since both boards run the same file, you need to set the mac address to the rece
 Then flash both boards with the same code but with different peer address. They shouhld be able to talk to each other. **Just remember to comment out main.cpp and findmac.cpp** so its the only file running. 
 
 oct 22 by carl
+
+
+## updated esp-now nov 1
+Now esp-now works as designed on two tested esp32 boards. 
+
+Here's what i did for this week: 
+1. added a file called ```receiver.cpp``` that functions solely as the receiver. all it does is receive stuff from the sender and sends a "message recevied" reply. 
+
+2. modified ```main.cpp``` to be the latest main branch code + esp now sender code. The code in ```main``` will now try to send over data when it gets it in the CORE 1 loop. Through the ```sendMessage()``` function. 
+
+These two should work, but i havent tested them yet. 
+
+Carl
