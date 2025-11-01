@@ -15,6 +15,11 @@
 // -- MISC --
 #define RGB_pin 48
 #define BAUD_RATE 115200
+#define ALPHA 0.98f
+#define DT 0.01f
+#define GX_BIAS 2.50f
+#define GY_BIAS -4.65f
+#define GZ_BIAS -1.13f
 
 // ===== CONTROL LOOP TIMING =====
 #define RATE_LOOP_HZ 250  // inner loop (gyro rate feedback)
