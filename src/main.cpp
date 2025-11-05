@@ -51,6 +51,7 @@ void controlLoop(void *parameter)
     {
         uint32_t loop_start = micros();
 
+        // === GRAB SENSOR DATA ===
         uint32_t t0 = micros();
         bool ok = mpu.update();
         uint32_t mpu_read_us = micros() - t0;
@@ -170,9 +171,9 @@ void setup()
     xTaskCreatePinnedToCore(
         controlLoop,  
         "ControLoop",
-        8192,
+        8192,   // memory size (deterministic and no dynamic allocation so shouldn't matter)
         NULL,
-        3,
+        3,      // higher priority than logging task
         NULL,
         0
     );
