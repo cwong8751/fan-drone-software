@@ -49,6 +49,7 @@
 #define PWM_MAX_DUTY ((1 << PWM_RES_BITS) - 1)
 #define SERVO_MAX_US 2000
 #define SERVO_MIN_US 1000
+#define USE_CSRF_INPUT 1
 
 // ===== CONTROL LOOP TIMING =====
 #define RATE_LOOP_HZ 250  // inner loop (gyro rate feedback)

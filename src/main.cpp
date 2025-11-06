@@ -1,5 +1,6 @@
 
 #include "cf.h"
+#include "rc.h"
 #include "metric.h"
 #include "config.h"
 #include "control.h"
@@ -8,6 +9,9 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <MPU9250.h>
+
+PWMChannel pwm_channels[4];
+bool armed;
 
 Performance perf;
 FlightState state;
@@ -113,8 +117,37 @@ void controlLoop(void *parameter)
         }
 
         // === CONTROL ===
-        crsf_update(); // update RC channels
+        if (armed)
+        {
+            // Read transmitter input
+        #if USE_CRSF_INPUT
+            int16_t rx_throttle = crsf_get_channel(0);
+            int16_t rx_roll     = crsf_get_channel(1);
+            int16_t rx_pitch    = crsf_get_channel(2);
+            int16_t rx_yaw      = crsf_get_channel(3);
+        #else
+            uint16_t rx_throttle = pwm_channels[0].pulseWidth;
+            uint16_t rx_roll     = pwm_channels[1].pulseWidth;
+            uint16_t rx_pitch    = pwm_channels[2].pulseWidth;
+            uint16_t rx_yaw      = pwm_channels[3].pulseWidth;
+        #endif
 
+            // Optional: print values every 100 loops
+            static int print_counter = 0;
+            if (++print_counter >= 100)
+            {
+                print_counter = 0;
+                Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n",
+                            rx_throttle, rx_roll, rx_pitch, rx_yaw);
+            }
+
+            // Update motor outputs
+        #if USE_CRSF_INPUT
+            motor_update_from_crsf();
+        #else
+            motor_update_from_pwm();
+        #endif
+        }
 
         // === METRICS ===
         perf.mpu_read_us = mpu_read_us;
@@ -207,30 +240,29 @@ void setup()
         0
     );
 
-    /*
-    // === PWM CHANNEL INIT ===
-    Serial.println("Initializing EDF + servo PWM channels...");
+    
+    // === TIMER INIT ===
+    Serial.println("Initializing timer...");
+    setupPWMOutput();
+    Serial.println("OK.\n");
 
-    // EDF output
-    ledcSetup(0, PWM_FREQ, PWM_RES_BITS);
-    ledcAttachPin(EDF_PIN, 0);
-
-    for (int i = 0; i < 5; i++)
-    {
-        ledcSetup(channels[i], PWM_FREQ, PWM_RES_BITS);
-        ledcAttachPin(pins[i], channels[i]);
-    }
-
-    ledcWrite(EDF_CHANNEL, 0); // EDF off
-    for (int i = 1; i <= 4; i++)
-    {
-        ledcWrite(i, servoMicrosecondsToDuty(1500)); // neutral position
-    }
-    */
-
+#if USE_CSRF
     Serial.println("Initializing UART CRSF receiver...");
     crsf_init();
     Serial.println("OK.\n");
+#else
+    Serial.println("Initializing PWM input interrups...");
+    setupPWMInput();
+    for (int i = 0; i < 4; i++)
+    {
+        pwm_channels[i].pulseWidth = (i==0) ? 1000 : 1500;
+        pwm_channels[i].newData = false;
+    }
+    Serial.println("OK.\n");
+#endif
+
+    motor_arm(true);
+    armed = true;
 
     setrgb(0, 255, 0);
 }
