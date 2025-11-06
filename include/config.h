@@ -5,21 +5,50 @@
 #define SUCCESS 0
 #define FAILURE -1
 
-
 // ===== HARDWARE PINS =====
 // -- MPU9250 --
-#define RGB_pin 48
+#define RGB_PIN 48
 #define SDA_PIN 8
 #define SCL_PIN 9
-#define I2C_FREQ 400000 // 400kHz sensor clock speed (MAX)
+// -- EDF --
+#define EDF_PIN 25
+// -- SERVOS --
+#define SERVO1_PIN 10
+#define SERVO2_PIN 11
+#define SERVO3_PIN 12
+#define SERVO4_PIN 13
+// -- RECEIVER --
+// - raw PWM -
+#define RX_THROTTLE_PIN 15
+#define RX_ROLL_PIN 16
+#define RX_PITCH_PIN 17
+#define RX_YAW_PIN 18
+// - CRSF -
+#define CRSF_TX_PIN 17
+#define CRSF_RX_PIN 18
+
+// ==== CHANNELS ====
+#define EDF_CHANNEL 0
+#define SERVO1_CHANNEL 1
+#define SERVO2_CHANNEL 2
+#define SERVO3_CHANNEL 3
+#define SERVO4_CHANNEL 4
 
 // == MISC ==
 #define BAUD_RATE 115200
+#define CRSF_BAUD_RATE 420000
 #define ALPHA 0.98f
 #define DT 0.01f
+#define I2C_FREQ 400000 // 400kHz sensor clock speed (MAX)
 #define GX_BIAS 2.50f
 #define GY_BIAS -4.65f
 #define GZ_BIAS -1.13f
+#define CRSF_UART_NUM UART_NUM_1
+#define PWM_FREQ 50
+#define PWM_RES_BITS 16
+#define PWM_MAX_DUTY ((1 << PWM_RES_BITS) - 1)
+#define SERVO_MAX_US 2000
+#define SERVO_MIN_US 1000
 
 // ===== CONTROL LOOP TIMING =====
 #define RATE_LOOP_HZ 250  // inner loop (gyro rate feedback)

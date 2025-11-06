@@ -32,7 +32,10 @@ struct FlightState
     // data ready flag
     volatile bool data_ready = false;
 };
-
 extern FlightState state;
+
+void motor_init();
+void motor_update_from_crsf();
+void motor_arm(bool arm);
 
 #endif // CONTROL_H

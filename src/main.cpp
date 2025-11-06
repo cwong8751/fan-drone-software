@@ -3,6 +3,7 @@
 #include "metric.h"
 #include "config.h"
 #include "control.h"
+#include "crsf_rc.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
@@ -11,6 +12,8 @@
 Performance perf;
 FlightState state;
 CF cf(ALPHA);
+int channels[] = {EDF_CHANNEL, SERVO1_CHANNEL, SERVO2_CHANNEL, SERVO3_CHANNEL, SERVO4_CHANNEL};
+int pins[] = {EDF_PIN, SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN};
 
 // library MPU9250 object
 MPU9250 mpu;
@@ -21,7 +24,24 @@ SemaphoreHandle_t state_mutex;
 // helper function for LEDs indicating FC status
 void setrgb(uint8_t red, uint8_t green, uint8_t blue)
 {
-  neopixelWrite(RGB_pin, red, green, blue);
+  neopixelWrite(RGB_PIN, red, green, blue);
+}
+
+// helper function to convert microseconds to duty cycle for PWM
+uint32_t servoMicrosecondsToDuty(uint16_t microseconds)
+{
+    const uint32_t max_duty = (1 << PWM_RES_BITS) - 1;
+    return (microseconds * max_duty) / 20000; // 20ms period
+}
+
+// helper function to set servo position in microseconds
+void setServoMicroseconds(uint8_t channel, uint16_t microseconds)
+{
+    if (microseconds < 1000) microseconds = 1000;
+    if (microseconds > 2000) microseconds = 2000;
+
+    uint32_t duty = servoMicrosecondsToDuty(microseconds);
+    ledcWrite(channel, duty);
 }
 
 // ===== CORE 0 =====
@@ -47,6 +67,7 @@ void controlLoop(void *parameter)
 
     Serial.println("[ControlLoop] Task started on Core 0");
 
+    // ==== BEGIN CONTROL LOOP ====
     while (true)
     {
         uint32_t loop_start = micros();
@@ -56,38 +77,46 @@ void controlLoop(void *parameter)
         bool ok = mpu.update();
         uint32_t mpu_read_us = micros() - t0;
 
-        lgx = mpu.getGyroX() - GX_BIAS;
-        lgy = mpu.getGyroY() - GY_BIAS;
-        lgz = mpu.getGyroZ() - GZ_BIAS;
-        lax = mpu.getAccX();
-        lay = mpu.getAccY();
-        laz = mpu.getAccZ();
-
-        lmx = mpu.getMagX();
-        lmy = mpu.getMagY();
-        lmz = mpu.getMagZ();
-
-        cf.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz, 1.0f / RATE_LOOP_HZ);
-
-        float roll = cf.getRoll();
-        float pitch = cf.getPitch();
-        float yaw = cf.getYaw();
-
-        if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(2)) == pdTRUE)
+        if (ok)
         {
-            state.roll = roll;
-            state.pitch = pitch;
-            state.yaw = yaw;
+            lgx = mpu.getGyroX() - GX_BIAS;
+            lgy = mpu.getGyroY() - GY_BIAS;
+            lgz = mpu.getGyroZ() - GZ_BIAS;
+            lax = mpu.getAccX();
+            lay = mpu.getAccY();
+            laz = mpu.getAccZ();
 
-            state.gyro_x = lgx;
-            state.gyro_y = lgy;
-            state.gyro_z = lgz;
+            lmx = mpu.getMagX();
+            lmy = mpu.getMagY();
+            lmz = mpu.getMagZ();
 
-            state.timestamp_ms = millis();
-            state.data_ready = true;
-            xSemaphoreGive(state_mutex);
+            cf.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz, 1.0f / RATE_LOOP_HZ);
+
+            float roll = cf.getRoll();
+            float pitch = cf.getPitch();
+            float yaw = cf.getYaw();
+
+            if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(2)) == pdTRUE)
+            {
+                state.roll = roll;
+                state.pitch = pitch;
+                state.yaw = yaw;
+
+                state.gyro_x = lgx;
+                state.gyro_y = lgy;
+                state.gyro_z = lgz;
+
+                state.timestamp_ms = millis();
+                state.data_ready = true;
+                xSemaphoreGive(state_mutex);
+            }
         }
 
+        // === CONTROL ===
+        crsf_update(); // update RC channels
+
+
+        // === METRICS ===
         perf.mpu_read_us = mpu_read_us;
         perf.loop_time_us = micros() - loop_start;
         loops_in_window++;
@@ -177,6 +206,31 @@ void setup()
         NULL,
         0
     );
+
+    /*
+    // === PWM CHANNEL INIT ===
+    Serial.println("Initializing EDF + servo PWM channels...");
+
+    // EDF output
+    ledcSetup(0, PWM_FREQ, PWM_RES_BITS);
+    ledcAttachPin(EDF_PIN, 0);
+
+    for (int i = 0; i < 5; i++)
+    {
+        ledcSetup(channels[i], PWM_FREQ, PWM_RES_BITS);
+        ledcAttachPin(pins[i], channels[i]);
+    }
+
+    ledcWrite(EDF_CHANNEL, 0); // EDF off
+    for (int i = 1; i <= 4; i++)
+    {
+        ledcWrite(i, servoMicrosecondsToDuty(1500)); // neutral position
+    }
+    */
+
+    Serial.println("Initializing UART CRSF receiver...");
+    crsf_init();
+    Serial.println("OK.\n");
 
     setrgb(0, 255, 0);
 }
