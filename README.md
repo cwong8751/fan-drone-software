@@ -57,3 +57,45 @@ Here's what i did for this week:
 These two should work, but i havent tested them yet. 
 
 Carl
+
+
+## receiver/controller wifi setup nov 6
+To pair the radiomaster controller to the receiver. do the follwoing. 
+
+1. Wire the receiver up and make sure its powered on, there is a LED on the receiver that lights up. It should flash/pulse and then stay purple. 
+
+2. Fire up the controller. You'll be met with something like this:
+
+![step 1](./images//IMG_0151.jpg)
+
+
+3. Then, find the sys button on the right and press it. It should bring you to this menu: 
+
+![step2](./images//IMG_0153.jpg)
+
+4. Move your finger to the cylindrical looking wheel and click at the "ExpressLRS" option. 
+
+![step3](./images/IMG_0154.jpg)
+
+5. Then use the wheel to scroll down till when you see the option "OTHER DEVICES", this means the receiver is sucessfully paired. You could also verify that by looking for the constant purple LED on the receiver.
+
+
+6. Then, scroll back up till you see "WIFI CONNECTIVITY" or something similar. 
+
+![step4](./images//IMG_0155.jpg)
+
+7. Then use the cylindrical scroll wheel and click on it, it should bring you to this menu: 
+
+![step5](./images/IMG_0156.jpg)
+
+8. Then scroll down to "Enable RX WIFI" and click on it, its gonna send start the WIFI on the receiver. 
+
+![step6](./images/IMG_0157.jpg)
+
+9. Then navigate to your laptop and find the wifi name "ExpressLRS RX", the password is "expresslrs"
+
+![step7](./images/IMG_0159.jpg)
+
+10. Connect to said wifi and go to 10.0.0.1 and there's your setup. 
+
+carl
