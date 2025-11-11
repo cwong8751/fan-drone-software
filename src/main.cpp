@@ -121,17 +121,38 @@ void controlLoop(void *parameter)
         if (armed)
         {
             // read transmitter input
-            int16_t rx_throttle = crsf_get_channel(0); // <-- primary focus atm
-            int16_t rx_roll     = crsf_get_channel(1);
-            int16_t rx_pitch    = crsf_get_channel(2);
-            int16_t rx_yaw      = crsf_get_channel(3);
+            int16_t rx_throttle = crsf_get_channel(2); // 3->2 
+            int16_t rx_roll = crsf_get_channel(0); // 1->3
+            int16_t rx_pitch = crsf_get_channel(1); // 2->1
+            int16_t rx_yaw = crsf_get_channel(3); // 4->3
+
+            // normalize digital values
+            auto norm = [](int16_t val)
+            {
+                return (float)(val - 992) / 820.0f; // center at midpoint (992? for 172-1811)
+            };
+            float roll = norm(rx_roll);
+            float pitch = norm(rx_pitch);
+            float yaw = norm(rx_yaw);
+            float throttle = (float)(rx_throttle - 172) / (1811 - 172);
 
             // print values every 100 loops
             static int print_counter = 0;
-            if (++print_counter >= 100)
+            if (++print_counter >= 10)
             {
                 print_counter = 0;
-                Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
+                //Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
+                Serial.print("Throttle:");
+                Serial.print(rx_throttle);
+                Serial.print(",");
+                Serial.print("Roll:");
+                Serial.print(rx_roll);
+                Serial.print(",");
+                Serial.print("Pitch:");
+                Serial.print(rx_pitch);
+                Serial.print(",");
+                Serial.print("Yaw:");
+                Serial.println(rx_yaw);
             }
 
             // update motor outputs

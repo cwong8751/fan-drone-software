@@ -6,21 +6,22 @@
 #define FAILURE -1
 
 // ===== HARDWARE PINS =====
-// -- MPU9250 --
-#define RGB_PIN 48
+// --- MPU9250 ---
 #define SDA_PIN 8
 #define SCL_PIN 9
-// -- EDF --
+// --- EDF ---
 #define EDF_PIN 25
-// -- SERVOS --
+// --- SERVOS ---
 #define SERVO1_PIN 10
 #define SERVO2_PIN 11
 #define SERVO3_PIN 12
 #define SERVO4_PIN 13
-// -- RECEIVER --
+// --- RECEIVER ---
 // - CRSF -
 #define CRSF_TX_PIN 17
 #define CRSF_RX_PIN 18
+// --- OTHER ---
+#define RGB_PIN 48
 
 // ==== CHANNELS ====
 #define EDF_CHANNEL 0

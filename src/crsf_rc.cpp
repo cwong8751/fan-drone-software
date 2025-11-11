@@ -62,27 +62,48 @@ void crsf_update()
             if (i + frame_len + 2 > len) continue;
 
             uint8_t type = rx_buffer[i + 2];
-            if (type == 0x16) // rc channel data frame
+            //printf("Frame: SYNC 0xC8, len=%d, type=0x%02X\n", len, type);
+            if (type == 0x16) // RC channels frame
             {
-                uint8_t *payload = &rx_buffer[i + 3];
-                uint8_t ch_idx = 0;
-                uint8_t bit_buffer = 0;
-                uint8_t bits_in_buffer = 0;
+                uint8_t *payload = &rx_buffer[i + 3]; // start of channel data
 
-                for (int j = 0; j < 22; j++)
+                uint32_t bitBuffer = 0;
+                uint8_t bitsInBuffer = 0;
+                uint8_t targetChannel = 2;  // <-- channel 3 (zero-indexed)
+                uint16_t value = 0;
+                uint8_t chIdx = 0;
+
+                for (int j = 0; j < 22; j++)  // 22 bytes total payload
                 {
-                    bit_buffer |= ((uint32_t)payload[j]) << bits_in_buffer;
-                    bits_in_buffer += 8;
+                    bitBuffer |= ((uint32_t)payload[j]) << bitsInBuffer;
+                    bitsInBuffer += 8;
 
-                    while (bits_in_buffer >= 11 && ch_idx < 16)
+                    while (bitsInBuffer >= 11)
                     {
-                        channels[ch_idx++] = bit_buffer & 0x7FF;
-                        bit_buffer >>= 11;
-                        bits_in_buffer -= 11;
+                        value = bitBuffer & 0x7FF; // extract 11 bits
+                        channels[chIdx] = value;
+                        chIdx++;
+                        bitBuffer >>= 11;
+                        bitsInBuffer -= 11;
                     }
                 }
             }
         }
+    }
+}
+
+static void csrf_debug_throttle_raw()
+{
+    uint8_t buf[64];
+    int len = uart_read_bytes(CRSF_UART_NUM, buf, sizeof(buf), 100 / portTICK_PERIOD_MS);
+    if (len > 0)
+    {
+        printf("[CRSF RAW BYTES] %d bytes: ", len);
+        for (int i = 0; i < len; i++)
+        {
+            printf("%02X ", buf[i]);
+        }
+        printf("\n");
     }
 }
 
