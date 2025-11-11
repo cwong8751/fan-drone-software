@@ -115,67 +115,6 @@ void motor_update_from_crsf()
     write_us(SERVO4_CHANNEL, servo4_us); 
 }
 
-static uint16_t readPWM_us(int pin)
-{
-    // blocking for simplicity; use RMT for real control loops
-    return pulseIn(pin, HIGH, 25000);  // 25ms timeout, returns pulse width in µs
-}
-
-void motor_update_from_pwm()
-{
-    if (!armed) return;
-
-    uint16_t rx_throttle = readPWM_us(RX_THROTTLE_PIN);
-    uint16_t rx_roll     = readPWM_us(RX_ROLL_PIN);
-    uint16_t rx_pitch    = readPWM_us(RX_PITCH_PIN);
-    uint16_t rx_yaw      = readPWM_us(RX_YAW_PIN);
-
-    auto norm = [](uint16_t val)
-    {
-        return ((float)val - 1500.0f) / 500.0f; // -1.0 to +1.0
-    };
-    float roll = norm(rx_roll);
-    float pitch = norm(rx_pitch);
-    float yaw = norm(rx_yaw);
-    float throttle = ((float)rx_throttle - 1000.0f) / 1000.0f; // 0.0 to 1.0
-
-    uint16_t throttle_us = (uint16_t)(1000 + throttle * 1000);
-    write_us(EDF_CHANNEL, throttle_us);
-
-    const int16_t SERVO_RANGE = 250;
-    uint16_t base_us = 1500;
-
-    uint16_t servo1_us = base_us + (pitch + roll - yaw) * SERVO_RANGE;
-    uint16_t servo2_us = base_us + (pitch - roll - yaw) * SERVO_RANGE;
-    uint16_t servo3_us = base_us + (pitch - roll - yaw) * SERVO_RANGE;
-    uint16_t servo4_us = base_us + (pitch + roll + yaw) * SERVO_RANGE;
-
-    auto clamp = [](uint16_t val)
-    {
-        return (uint16_t)std::max(1000, std::min(2000, (int)val));
-    };
-    servo1_us = clamp(servo1_us);
-    servo2_us = clamp(servo2_us);
-    servo3_us = clamp(servo3_us);
-    servo4_us = clamp(servo4_us);
-
-    write_us(SERVO1_CHANNEL, servo1_us);
-    write_us(SERVO2_CHANNEL, servo2_us);
-    write_us(SERVO3_CHANNEL, servo3_us);
-    write_us(SERVO4_CHANNEL, servo4_us);
-}
-
-void motorUpdate()
-{
-    if (!armed) return;
-
-#if USE_CRSF
-    motor_update_from_crsf();
-#else
-    motor_update_from_pwm();
-#endif
-}
-
 void setupPWMOutput()
 {
     // configure timer

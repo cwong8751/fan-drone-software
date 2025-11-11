@@ -18,11 +18,6 @@
 #define SERVO3_PIN 12
 #define SERVO4_PIN 13
 // -- RECEIVER --
-// - raw PWM -
-#define RX_THROTTLE_PIN 15
-#define RX_ROLL_PIN 16
-#define RX_PITCH_PIN 17
-#define RX_YAW_PIN 18
 // - CRSF -
 #define CRSF_TX_PIN 17
 #define CRSF_RX_PIN 18

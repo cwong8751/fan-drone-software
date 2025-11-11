@@ -5,6 +5,7 @@
 
 static uint8_t rx_buffer[128];
 static int16_t channels[16];
+bool crsf_initialized = false;
 
 void crsf_init()
 {
@@ -16,15 +17,39 @@ void crsf_init()
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, 
     };
 
-    uart_param_config(CRSF_UART_NUM, &uart_config);
-    uart_set_pin(CRSF_UART_NUM, CRSF_TX_PIN, CRSF_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    uart_driver_install(CRSF_UART_NUM, sizeof(rx_buffer) * 2, 0, 0, NULL, 0);
+    esp_err_t ret = uart_param_config(CRSF_UART_NUM, &uart_config);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE("CRSF", "uart_param_config failed: %s", esp_err_to_name(ret));
+        return;
+    }
 
+    ret = uart_set_pin(CRSF_UART_NUM, CRSF_TX_PIN, CRSF_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE("CRSF", "uart_set_pin failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ret = uart_driver_install(CRSF_UART_NUM, sizeof(rx_buffer) * 2, 0, 0, NULL, 0);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE("CRSF", "uart_driver_install failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    crsf_initialized = true;
     ESP_LOGI("CRSF", "CRSF UART initialized at %d buad", CRSF_BAUD_RATE);
 }
 
 void crsf_update()
 {
+    if (!crsf_initialized)
+    {
+        ESP_LOGW("CRSF", "crsf not initialized, skipping read.");
+        return;
+    }
+    
     int len = uart_read_bytes(CRSF_UART_NUM, rx_buffer, sizeof(rx_buffer), 10 / portTICK_PERIOD_MS);
     if (len <= 0) return;
 
@@ -33,7 +58,7 @@ void crsf_update()
     {
         if (rx_buffer[i] == 0xC8) // CRSF SYNC BYTE
         {
-            uint8_t frame_len = rx_buffer[i + 1];
+            uint8_t frame_len = rx_buffer[i + 1]; // TODO: need to implement checksum safety to ensure entact data frames
             if (i + frame_len + 2 > len) continue;
 
             uint8_t type = rx_buffer[i + 2];

@@ -1,6 +1,5 @@
 
 #include "cf.h"
-#include "rc.h"
 #include "metric.h"
 #include "config.h"
 #include "control.h"
@@ -10,7 +9,7 @@
 #include <Wire.h>
 #include <MPU9250.h>
 
-PWMChannel pwm_channels[4];
+//PWMChannel pwm_channels[4];
 bool armed;
 
 Performance perf;
@@ -117,38 +116,28 @@ void controlLoop(void *parameter)
         }
 
         // === CONTROL ===
+        crsf_update();
+        
         if (armed)
         {
-            // Read transmitter input
-        #if USE_CRSF_INPUT
-            int16_t rx_throttle = crsf_get_channel(0);
+            // read transmitter input
+            int16_t rx_throttle = crsf_get_channel(0); // <-- primary focus atm
             int16_t rx_roll     = crsf_get_channel(1);
             int16_t rx_pitch    = crsf_get_channel(2);
             int16_t rx_yaw      = crsf_get_channel(3);
-        #else
-            uint16_t rx_throttle = pwm_channels[0].pulseWidth;
-            uint16_t rx_roll     = pwm_channels[1].pulseWidth;
-            uint16_t rx_pitch    = pwm_channels[2].pulseWidth;
-            uint16_t rx_yaw      = pwm_channels[3].pulseWidth;
-        #endif
 
-            // Optional: print values every 100 loops
+            // print values every 100 loops
             static int print_counter = 0;
             if (++print_counter >= 100)
             {
                 print_counter = 0;
-                Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n",
-                            rx_throttle, rx_roll, rx_pitch, rx_yaw);
+                Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
             }
 
-            // Update motor outputs
-        #if USE_CRSF_INPUT
-            motor_update_from_crsf();
-        #else
-            motor_update_from_pwm();
-        #endif
+            // update motor outputs
+            //motor_update_from_crsf();
         }
-
+       
         // === METRICS ===
         perf.mpu_read_us = mpu_read_us;
         perf.loop_time_us = micros() - loop_start;
@@ -176,7 +165,7 @@ void setup()
     Wire.setClock(400000);
 
     Serial.print("Initializing MPU9250 sensor...");
-    // initialize MPU9250
+    /*initialize MPU9250
     if (!mpu.setup(0x68))
     {
         Serial.print("FAILED.\n");
@@ -187,12 +176,13 @@ void setup()
         }
     }
     Serial.print("OK...");
-
+    */
+    
     // calibrate sensors (assumes device is stationary, optional in the future)
-    mpu.calibrateAccelGyro();
+    //mpu.calibrateAccelGyro();
     Serial.print("GYRO/ACCEL OK...");
     delay(1000);
-    mpu.calibrateMag();
+    //mpu.calibrateMag();
     Serial.print("MAG OK.\n");
 
     Wire.setClock(400000);
@@ -205,7 +195,7 @@ void setup()
     Serial.print("OK\n");
     */
 
-    mpu.setFilterIterations(1);
+    //mpu.setFilterIterations(1);
 
     /*
     Serial.println("Initializing web server...");
@@ -242,24 +232,13 @@ void setup()
 
     
     // === TIMER INIT ===
-    Serial.println("Initializing timer...");
+    Serial.print("Initializing timer...");
     setupPWMOutput();
-    Serial.println("OK.\n");
+    Serial.print("OK.\n");
 
-#if USE_CSRF
-    Serial.println("Initializing UART CRSF receiver...");
+    Serial.print("Initializing UART CRSF receiver...");
     crsf_init();
-    Serial.println("OK.\n");
-#else
-    Serial.println("Initializing PWM input interrups...");
-    setupPWMInput();
-    for (int i = 0; i < 4; i++)
-    {
-        pwm_channels[i].pulseWidth = (i==0) ? 1000 : 1500;
-        pwm_channels[i].newData = false;
-    }
-    Serial.println("OK.\n");
-#endif
+    Serial.print("OK.\n");
 
     motor_arm(true);
     armed = true;
@@ -272,6 +251,7 @@ void setup()
 // ==================
 void loop() 
 {
+    /*
     static uint32_t last_print_time = 0;
     static uint32_t last_stats_time = 0;
     static float last_roll = 0, last_pitch = 0, last_yaw = 0;
@@ -302,7 +282,7 @@ void loop()
             xSemaphoreGive(state_mutex);
         }
     }
-    */
+    
 
     static uint32_t lastPrint = 0;
     if (millis() - lastPrint >= 50) { // ~20 Hz print rate
@@ -322,4 +302,5 @@ void loop()
     }
 
     vTaskDelay(pdMS_TO_TICKS(5)); // don’t hog CPU
+    */
 }

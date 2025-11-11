@@ -37,8 +37,6 @@ extern FlightState state;
 void motor_init();
 void motor_update_from_crsf();
 void motor_arm(bool arm);
-
-void motor_update_from_pwm();
 void setupPWMOutput();
 
 #endif // CONTROL_H
