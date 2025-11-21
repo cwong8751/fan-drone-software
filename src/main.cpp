@@ -7,9 +7,12 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
-#include <MPU9250.h>
+#include <Adafruit_LSM6DS3TRC.h>
 
-//PWMChannel pwm_channels[4];
+// define the adafruit lsm6 object
+Adafruit_LSM6DS3TRC lsm6ds3trc;
+
+// PWMChannel pwm_channels[4];
 bool armed;
 
 Performance perf;
@@ -18,16 +21,13 @@ CF cf(ALPHA);
 int channels[] = {EDF_CHANNEL, SERVO1_CHANNEL, SERVO2_CHANNEL, SERVO3_CHANNEL, SERVO4_CHANNEL};
 int pins[] = {EDF_PIN, SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN};
 
-// library MPU9250 object
-MPU9250 mpu;
-
 // mutex for thread-safe access to our flight state
 SemaphoreHandle_t state_mutex;
 
 // helper function for LEDs indicating FC status
 void setrgb(uint8_t red, uint8_t green, uint8_t blue)
 {
-  neopixelWrite(RGB_PIN, red, green, blue);
+    neopixelWrite(RGB_PIN, red, green, blue);
 }
 
 // helper function to convert microseconds to duty cycle for PWM
@@ -40,8 +40,10 @@ uint32_t servoMicrosecondsToDuty(uint16_t microseconds)
 // helper function to set servo position in microseconds
 void setServoMicroseconds(uint8_t channel, uint16_t microseconds)
 {
-    if (microseconds < 1000) microseconds = 1000;
-    if (microseconds > 2000) microseconds = 2000;
+    if (microseconds < 1000)
+        microseconds = 1000;
+    if (microseconds > 2000)
+        microseconds = 2000;
 
     uint32_t duty = servoMicrosecondsToDuty(microseconds);
     ledcWrite(channel, duty);
@@ -74,57 +76,63 @@ void controlLoop(void *parameter)
     while (true)
     {
         uint32_t loop_start = micros();
-
         // === GRAB SENSOR DATA ===
         uint32_t t0 = micros();
-        bool ok = mpu.update();
-        uint32_t mpu_read_us = micros() - t0;
 
-        if (ok)
+        sensors_event_t accel;
+        sensors_event_t gyro;
+        sensors_event_t temp;
+        lsm6ds3trc.getEvent(&accel, &gyro, &temp);
+
+        uint32_t imu_read_us = micros() - t0;
+
+        // Gyro: rad/s -> deg/s, then subtract bias
+        lgx = gyro.gyro.x * RAD_TO_DEG - GX_BIAS;
+        lgy = gyro.gyro.y * RAD_TO_DEG - GY_BIAS;
+        lgz = gyro.gyro.z * RAD_TO_DEG - GZ_BIAS;
+
+        // Accel: m/s^2 -> g
+        const float GRAVITY_MSS = 9.80665f;
+        lax = accel.acceleration.x / GRAVITY_MSS;
+        lay = accel.acceleration.y / GRAVITY_MSS;
+        laz = accel.acceleration.z / GRAVITY_MSS;
+
+        // No magnetometer on LSM6DS3TR-C; set to zero
+        lmx = 0.0f;
+        lmy = 0.0f;
+        lmz = 0.0f;
+
+        cf.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz, 1.0f / RATE_LOOP_HZ);
+
+        float roll = cf.getRoll();
+        float pitch = cf.getPitch();
+        float yaw = cf.getYaw();
+
+        if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(2)) == pdTRUE)
         {
-            lgx = mpu.getGyroX() - GX_BIAS;
-            lgy = mpu.getGyroY() - GY_BIAS;
-            lgz = mpu.getGyroZ() - GZ_BIAS;
-            lax = mpu.getAccX();
-            lay = mpu.getAccY();
-            laz = mpu.getAccZ();
+            state.roll = roll;
+            state.pitch = pitch;
+            state.yaw = yaw;
 
-            lmx = mpu.getMagX();
-            lmy = mpu.getMagY();
-            lmz = mpu.getMagZ();
+            state.gyro_x = lgx;
+            state.gyro_y = lgy;
+            state.gyro_z = lgz;
 
-            cf.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz, 1.0f / RATE_LOOP_HZ);
-
-            float roll = cf.getRoll();
-            float pitch = cf.getPitch();
-            float yaw = cf.getYaw();
-
-            if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(2)) == pdTRUE)
-            {
-                state.roll = roll;
-                state.pitch = pitch;
-                state.yaw = yaw;
-
-                state.gyro_x = lgx;
-                state.gyro_y = lgy;
-                state.gyro_z = lgz;
-
-                state.timestamp_ms = millis();
-                state.data_ready = true;
-                xSemaphoreGive(state_mutex);
-            }
+            state.timestamp_ms = millis();
+            state.data_ready = true;
+            xSemaphoreGive(state_mutex);
         }
 
         // === CONTROL ===
         crsf_update();
-        
+
         if (armed)
         {
             // read transmitter input
-            int16_t rx_throttle = crsf_get_channel(2); // 3->2 
-            int16_t rx_roll = crsf_get_channel(0); // 1->3
-            int16_t rx_pitch = crsf_get_channel(1); // 2->1
-            int16_t rx_yaw = crsf_get_channel(3); // 4->3
+            int16_t rx_throttle = crsf_get_channel(2); // 3->2
+            int16_t rx_roll = crsf_get_channel(0);     // 1->3
+            int16_t rx_pitch = crsf_get_channel(1);    // 2->1
+            int16_t rx_yaw = crsf_get_channel(3);      // 4->3
 
             // normalize digital values
             auto norm = [](int16_t val)
@@ -141,7 +149,7 @@ void controlLoop(void *parameter)
             if (++print_counter >= 10)
             {
                 print_counter = 0;
-                //Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
+                // Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
                 Serial.print("Throttle:");
                 Serial.print(rx_throttle);
                 Serial.print(",");
@@ -156,11 +164,11 @@ void controlLoop(void *parameter)
             }
 
             // update motor outputs
-            //motor_update_from_crsf();
+            // motor_update_from_crsf();
         }
-       
+
         // === METRICS ===
-        perf.mpu_read_us = mpu_read_us;
+        perf.mpu_read_us = imu_read_us;
         perf.loop_time_us = micros() - loop_start;
         loops_in_window++;
 
@@ -174,10 +182,10 @@ void controlLoop(void *parameter)
     }
 }
 
-void setup() 
+void setup()
 {
     Serial.begin(BAUD_RATE); // start serial comm for USB
-    
+
     Serial.println("\n\nInitializing peripherals...\n\n");
 
     setrgb(255, 255, 0);
@@ -185,38 +193,44 @@ void setup()
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
 
-    Serial.print("Initializing MPU9250 sensor...");
-    /*initialize MPU9250
-    if (!mpu.setup(0x68))
+    Serial.print("Initializing LSM6DS3TR-C sensor...");
+    if (!lsm6ds3trc.begin_I2C())
     {
-        Serial.print("FAILED.\n");
+        Serial.println("FAILED.");
         setrgb(255, 0, 0);
-        while(1)
+        while (1)
         {
-            delay(1);
+            delay(10);
         }
     }
-    Serial.print("OK...");
-    */
-    
+    Serial.println("OK.");
+
+    // setup accel ranges 
+    Serial.print("Configuring LSM6DS3TR-C sensor...");
+    lsm6ds3trc.setAccelRange(LSM6DS_ACCEL_RANGE_4_G);
+    lsm6ds3trc.setGyroRange(LSM6DS_GYRO_RANGE_1000_DPS);
+    lsm6ds3trc.setAccelDataRate(LSM6DS_RATE_416_HZ);
+    lsm6ds3trc.setGyroDataRate(LSM6DS_RATE_416_HZ);
+    Serial.println("OK.");
+
     // calibrate sensors (assumes device is stationary, optional in the future)
-    //mpu.calibrateAccelGyro();
+    // mpu.calibrateAccelGyro();
     Serial.print("GYRO/ACCEL OK...");
     delay(1000);
-    //mpu.calibrateMag();
+    // mpu.calibrateMag();
     Serial.print("MAG OK.\n");
 
     Wire.setClock(400000);
 
-    //mpu.setMagneticDeclination(0);
-    
+    // mpu.setMagneticDeclination(0);
+
     /*
     Serial.print("SETTING FILTER TO MADGWICK...");
     mpu.selectFilter(QuatFilterSel::MADGWICK);
     Serial.print("OK\n");
     */
 
-    //mpu.setFilterIterations(1);
+    // mpu.setFilterIterations(1);
 
     /*
     Serial.println("Initializing web server...");
@@ -231,27 +245,26 @@ void setup()
     Serial.print("OK.");
     */
 
-    // create mutex 
+    // create mutex
     state_mutex = xSemaphoreCreateMutex();
     if (!state_mutex)
     {
         Serial.println("ERROR: Failed to create mutex");
         setrgb(255, 0, 0);
-        while (true) delay(1);
+        while (true)
+            delay(1);
     }
 
-    // bind control loop task to its own core (Core 0) 
+    // bind control loop task to its own core (Core 0)
     xTaskCreatePinnedToCore(
-        controlLoop,  
+        controlLoop,
         "ControLoop",
-        8192,   // memory size (deterministic and no dynamic allocation so shouldn't matter)
+        8192, // memory size (deterministic and no dynamic allocation so shouldn't matter)
         NULL,
-        3,      // higher priority than logging task
+        3, // higher priority than logging task
         NULL,
-        0
-    );
+        0);
 
-    
     // === TIMER INIT ===
     Serial.print("Initializing timer...");
     setupPWMOutput();
@@ -270,7 +283,7 @@ void setup()
 // ===== CORE 1 =====
 // the work done on this core will be dedicated to logging and grabbing data from our monocopter
 // ==================
-void loop() 
+void loop()
 {
     /*
     static uint32_t last_print_time = 0;
@@ -303,7 +316,7 @@ void loop()
             xSemaphoreGive(state_mutex);
         }
     }
-    
+
 
     static uint32_t lastPrint = 0;
     if (millis() - lastPrint >= 50) { // ~20 Hz print rate
