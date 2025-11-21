@@ -6,43 +6,58 @@
 
 static bool armed = false;
 
-static void setup_pwm(uint8_t channel, uint8_t pin, uint32_t freq)
+void setup_pwm_timer()
 {
     ledc_timer_config_t timer {
         .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = (ledc_timer_bit_t)PWM_RES_BITS,
-        .timer_num = (ledc_timer_t)channel,
-        .freq_hz = freq,
+        .duty_resolution = LEDC_TIMER_14_BIT,
+        .timer_num = LEDC_TIMER_0,
+        .freq_hz = PWM_FREQ,
         .clk_cfg = LEDC_AUTO_CLK
     };
-    ledc_timer_config(&timer);
+    esp_err_t err = ledc_timer_config(&timer);
+    if (err != ESP_OK) {
+        Serial.printf("Timer config failed: %d\n", err);
+    }
+}
 
+void setup_pwm_channel(uint8_t channel, uint8_t pin)
+{
     ledc_channel_config_t ledc_channel {
         .gpio_num = pin,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .channel = (ledc_channel_t)channel,
-        .timer_sel = (ledc_timer_t)channel,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = LEDC_TIMER_0,
         .duty = 0,
         .hpoint = 0
     };
-    ledc_channel_config(&ledc_channel);
+    esp_err_t err = ledc_channel_config(&ledc_channel);
+    if (err != ESP_OK) {
+        Serial.printf("Channel %d config failed: %d\n", channel, err);
+    }
 }
 
 void motor_init()
 {
-    setup_pwm(EDF_CHANNEL, EDF_PIN, PWM_FREQ);
-    setup_pwm(SERVO1_CHANNEL, SERVO1_PIN, PWM_FREQ);
-    setup_pwm(SERVO2_CHANNEL, SERVO2_PIN, PWM_FREQ);
-    setup_pwm(SERVO3_CHANNEL, SERVO3_PIN, PWM_FREQ);
-    setup_pwm(SERVO4_CHANNEL, SERVO4_PIN, PWM_FREQ);
+    setup_pwm_timer();
+    setup_pwm_channel(EDF_CHANNEL, EDF_PIN);
+    setup_pwm_channel(SERVO1_CHANNEL, SERVO1_PIN);
+    setup_pwm_channel(SERVO2_CHANNEL, SERVO2_PIN);
+    setup_pwm_channel(SERVO3_CHANNEL, SERVO3_PIN);
+    setup_pwm_channel(SERVO4_CHANNEL, SERVO4_PIN);
 
     ESP_LOGI("CHANNELS", "PWM channels initialized");
 }
 
-static void write_us(uint8_t channel, uint16_t usec)
+void write_us(uint8_t channel, uint16_t usec)
 {
-    uint32_t max_duty = PWM_MAX_DUTY;
-    uint32_t duty = (uint32_t)((float)usec / 20000.0f * max_duty); // 20ms period
+    const uint32_t max_duty = (1 << 14) - 1;  // 16383
+    const uint32_t period_us = 1000000 / PWM_FREQ;
+    uint32_t duty = (usec * max_duty) / period_us;
+    
+    Serial.printf("Ch%d: %uus -> duty %lu\n", channel, usec, duty);
+    
     ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)channel, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)channel);
 }
@@ -69,9 +84,9 @@ void motor_update_from_crsf()
     if (!armed) return;
 
     // get RC inputs from channels
-    int16_t rx_throttle = crsf_get_channel(0);
-    int16_t rx_roll     = crsf_get_channel(1);
-    int16_t rx_pitch    = crsf_get_channel(2);
+    int16_t rx_throttle = crsf_get_channel(2);
+    int16_t rx_roll     = crsf_get_channel(0);
+    int16_t rx_pitch    = crsf_get_channel(1);
     int16_t rx_yaw      = crsf_get_channel(3);
 
     // normalize digital values
@@ -82,11 +97,11 @@ void motor_update_from_crsf()
     float roll = norm(rx_roll);
     float pitch = norm(rx_pitch);
     float yaw = norm(rx_yaw);
-    float throttle = (float)(rx_throttle - 172) / (1811 - 172);
+    //float throttle = (float)(rx_throttle - 172) / (1811 - 172);
 
     // EDF PWM
-    uint16_t throttle_us = (uint16_t)(1000 + throttle*1000);
-    write_us(EDF_CHANNEL, throttle_us);
+    //uint16_t throttle_us = (uint16_t)(1000 + throttle*1000);
+    //write_us(EDF_CHANNEL, throttle_us);
 
     // servo mixing
     const int16_t SERVO_RANGE = 250;
@@ -113,24 +128,4 @@ void motor_update_from_crsf()
     write_us(SERVO2_CHANNEL, servo2_us);
     write_us(SERVO3_CHANNEL, servo3_us);
     write_us(SERVO4_CHANNEL, servo4_us); 
-}
-
-void setupPWMOutput()
-{
-    // configure timer
-    ledcSetup(0, PWM_FREQ, PWM_RES_BITS);
-
-    // attach pins to channels
-    ledcAttachPin(EDF_PIN, EDF_CHANNEL);
-    ledcAttachPin(SERVO1_PIN, SERVO1_CHANNEL);
-    ledcAttachPin(SERVO2_PIN, SERVO2_CHANNEL);
-    ledcAttachPin(SERVO3_PIN, SERVO3_CHANNEL);
-    ledcAttachPin(SERVO4_PIN, SERVO4_CHANNEL);
-
-    // initialize all to neutral
-    write_us(0, 1000); // ESC off?
-    for (int ch = 1; ch <= 4; ch++)
-    {
-            write_us(ch, 1500);
-    }
 }

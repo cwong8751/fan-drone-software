@@ -35,8 +35,9 @@ struct FlightState
 extern FlightState state;
 
 void motor_init();
+void setup_pwm_timer();
+void setup_pwm_config();
 void motor_update_from_crsf();
 void motor_arm(bool arm);
-void setupPWMOutput();
-
+void write_us(uint8_t channel, uint16_t usec);
 #endif // CONTROL_H

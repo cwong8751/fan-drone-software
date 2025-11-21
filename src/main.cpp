@@ -4,6 +4,7 @@
 #include "config.h"
 #include "control.h"
 #include "crsf_rc.h"
+#include "driver/ledc.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
@@ -136,6 +137,7 @@ void controlLoop(void *parameter)
             float yaw = norm(rx_yaw);
             float throttle = (float)(rx_throttle - 172) / (1811 - 172);
 
+            
             // print values every 100 loops
             static int print_counter = 0;
             if (++print_counter >= 10)
@@ -156,9 +158,9 @@ void controlLoop(void *parameter)
             }
 
             // update motor outputs
-            //motor_update_from_crsf();
+            motor_update_from_crsf();
         }
-       
+
         // === METRICS ===
         perf.mpu_read_us = mpu_read_us;
         perf.loop_time_us = micros() - loop_start;
@@ -254,7 +256,7 @@ void setup()
     
     // === TIMER INIT ===
     Serial.print("Initializing timer...");
-    setupPWMOutput();
+    motor_init();
     Serial.print("OK.\n");
 
     Serial.print("Initializing UART CRSF receiver...");
