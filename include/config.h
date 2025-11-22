@@ -10,7 +10,7 @@
 #define SDA_PIN 8
 #define SCL_PIN 9
 // --- EDF ---
-#define EDF_PIN 16
+#define EDF_PIN 14
 // --- SERVOS ---
 #define SERVO1_PIN 10
 #define SERVO2_PIN 11
