@@ -1,4 +1,5 @@
 
+#include "cf.h"
 #include "metric.h"
 #include "config.h"
 #include "control.h"
