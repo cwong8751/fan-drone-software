@@ -9,8 +9,21 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <MPU9250.h>
+#include <esp_now.h>
 
-//PWMChannel pwm_channels[4];
+// esp now communications
+uint8_t peerAddress[] = {0x50, 0x78, 0x7D, 0x16, 0x34, 0xF8};
+esp_now_peer_info_t peerInfo;
+
+// todo: do we want a on data receive?
+// data sent callback
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+{
+    Serial.print("Send Status:\t");
+    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
+}
+
+// PWMChannel pwm_channels[4];
 bool armed;
 
 Performance perf;
@@ -28,7 +41,7 @@ SemaphoreHandle_t state_mutex;
 // helper function for LEDs indicating FC status
 void setrgb(uint8_t red, uint8_t green, uint8_t blue)
 {
-  neopixelWrite(RGB_PIN, red, green, blue);
+    neopixelWrite(RGB_PIN, red, green, blue);
 }
 
 // helper function to convert microseconds to duty cycle for PWM
@@ -41,11 +54,29 @@ uint32_t servoMicrosecondsToDuty(uint16_t microseconds)
 // helper function to set servo position in microseconds
 void setServoMicroseconds(uint8_t channel, uint16_t microseconds)
 {
-    if (microseconds < 1000) microseconds = 1000;
-    if (microseconds > 2000) microseconds = 2000;
+    if (microseconds < 1000)
+        microseconds = 1000;
+    if (microseconds > 2000)
+        microseconds = 2000;
 
     uint32_t duty = servoMicrosecondsToDuty(microseconds);
     ledcWrite(channel, duty);
+}
+
+// helper function to send a message via ESP-NOW
+void sendMessage(String msg)
+{
+    esp_err_t result = esp_now_send(peerAddress, (uint8_t *)msg.c_str(), msg.length() + 1);
+
+    if (result == ESP_OK)
+    {
+        Serial.print("Sent: ");
+        Serial.println(msg);
+    }
+    else
+    {
+        Serial.println("Error sending message");
+    }
 }
 
 // ===== CORE 0 =====
@@ -118,14 +149,14 @@ void controlLoop(void *parameter)
 
         // === CONTROL ===
         crsf_update();
-        
+
         if (armed)
         {
             // read transmitter input
-            int16_t rx_throttle = crsf_get_channel(2); // 3->2 
-            int16_t rx_roll = crsf_get_channel(0); // 1->3
-            int16_t rx_pitch = crsf_get_channel(1); // 2->1
-            int16_t rx_yaw = crsf_get_channel(3); // 4->3
+            int16_t rx_throttle = crsf_get_channel(2); // 3->2
+            int16_t rx_roll = crsf_get_channel(0);     // 1->3
+            int16_t rx_pitch = crsf_get_channel(1);    // 2->1
+            int16_t rx_yaw = crsf_get_channel(3);      // 4->3
 
             // normalize digital values
             auto norm = [](int16_t val)
@@ -137,13 +168,12 @@ void controlLoop(void *parameter)
             float yaw = norm(rx_yaw);
             float throttle = (float)(rx_throttle - 172) / (1811 - 172);
 
-            
             // print values every 100 loops
             static int print_counter = 0;
             if (++print_counter >= 10)
             {
                 print_counter = 0;
-                //Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
+                // Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
                 Serial.print("Throttle:");
                 Serial.print(rx_throttle);
                 Serial.print(",");
@@ -155,6 +185,10 @@ void controlLoop(void *parameter)
                 Serial.print(",");
                 Serial.print("Yaw:");
                 Serial.println(rx_yaw);
+
+                // send data to other esp32
+                String msg = "T:" + String(rx_throttle) + ",R:" + String(rx_roll) + ",P:" + String(rx_pitch) + ",Y:" + String(rx_yaw);
+                sendMessage(msg);
             }
 
             // update motor outputs
@@ -176,16 +210,45 @@ void controlLoop(void *parameter)
     }
 }
 
-void setup() 
+void setup()
 {
     Serial.begin(BAUD_RATE); // start serial comm for USB
-    
+
     Serial.println("\n\nInitializing peripherals...\n\n");
 
     setrgb(255, 255, 0);
 
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
+
+    // initialize wifi
+    Serial.print("Initializing WiFi communications...");
+    WiFi.mode(WIFI_STA);
+    Serial.print("OK.\n");
+
+    Serial.print("This board MAC Address: ");
+    Serial.println(WiFi.macAddress());
+
+    if (esp_now_init() != ESP_OK)
+    {
+        Serial.println("Error initializing ESP-NOW");
+        return;
+    }
+
+    esp_now_register_send_cb(OnDataSent);
+
+    memcpy(peerInfo.peer_addr, peerAddress, 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) != ESP_OK)
+    {
+        Serial.println("Failed to add peer");
+        return;
+    }
+    else {
+        sendMessage("Hello from main esp32");
+    }
 
     Serial.print("Initializing MPU9250 sensor...");
     /*initialize MPU9250
@@ -200,25 +263,25 @@ void setup()
     }
     Serial.print("OK...");
     */
-    
+
     // calibrate sensors (assumes device is stationary, optional in the future)
-    //mpu.calibrateAccelGyro();
+    // mpu.calibrateAccelGyro();
     Serial.print("GYRO/ACCEL OK...");
     delay(1000);
-    //mpu.calibrateMag();
+    // mpu.calibrateMag();
     Serial.print("MAG OK.\n");
 
     Wire.setClock(400000);
 
-    //mpu.setMagneticDeclination(0);
-    
+    // mpu.setMagneticDeclination(0);
+
     /*
     Serial.print("SETTING FILTER TO MADGWICK...");
     mpu.selectFilter(QuatFilterSel::MADGWICK);
     Serial.print("OK\n");
     */
 
-    //mpu.setFilterIterations(1);
+    // mpu.setFilterIterations(1);
 
     /*
     Serial.println("Initializing web server...");
@@ -233,27 +296,26 @@ void setup()
     Serial.print("OK.");
     */
 
-    // create mutex 
+    // create mutex
     state_mutex = xSemaphoreCreateMutex();
     if (!state_mutex)
     {
         Serial.println("ERROR: Failed to create mutex");
         setrgb(255, 0, 0);
-        while (true) delay(1);
+        while (true)
+            delay(1);
     }
 
-    // bind control loop task to its own core (Core 0) 
+    // bind control loop task to its own core (Core 0)
     xTaskCreatePinnedToCore(
-        controlLoop,  
+        controlLoop,
         "ControLoop",
-        8192,   // memory size (deterministic and no dynamic allocation so shouldn't matter)
+        8192, // memory size (deterministic and no dynamic allocation so shouldn't matter)
         NULL,
-        3,      // higher priority than logging task
+        3, // higher priority than logging task
         NULL,
-        0
-    );
+        0);
 
-    
     // === TIMER INIT ===
     Serial.print("Initializing timer...");
     motor_init();
@@ -272,7 +334,7 @@ void setup()
 // ===== CORE 1 =====
 // the work done on this core will be dedicated to logging and grabbing data from our monocopter
 // ==================
-void loop() 
+void loop()
 {
     /*
     static uint32_t last_print_time = 0;
@@ -305,7 +367,7 @@ void loop()
             xSemaphoreGive(state_mutex);
         }
     }
-    
+
 
     static uint32_t lastPrint = 0;
     if (millis() - lastPrint >= 50) { // ~20 Hz print rate
