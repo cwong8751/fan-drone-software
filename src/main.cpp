@@ -1,391 +1,396 @@
 
-// #include "cf.h"
-// #include "metric.h"
-// #include "config.h"
-// #include "control.h"
-// #include "crsf_rc.h"
-// #include "driver/ledc.h"
-// #include <Arduino.h>
-// #include <WiFi.h>
-// #include <Wire.h>
-// #include <MPU9250.h>
-// #include <esp_now.h>
-
-// // esp now communications
-// uint8_t peerAddress[] = {0x50, 0x78, 0x7D, 0x16, 0x34, 0xF8};
-// esp_now_peer_info_t peerInfo;
-
-// // todo: do we want a on data receive?
-// // data sent callback
-// void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
-// {
-//     Serial.print("Send Status:\t");
-//     Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
-// }
-
-// // PWMChannel pwm_channels[4];
-// bool armed;
-
-// Performance perf;
-// FlightState state;
-// CF cf(ALPHA);
-// int channels[] = {EDF_CHANNEL, SERVO1_CHANNEL, SERVO2_CHANNEL, SERVO3_CHANNEL, SERVO4_CHANNEL};
-// int pins[] = {EDF_PIN, SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN};
-
-// // library MPU9250 object
-// MPU9250 mpu;
-
-// // mutex for thread-safe access to our flight state
-// SemaphoreHandle_t state_mutex;
-
-// // helper function for LEDs indicating FC status
-// void setrgb(uint8_t red, uint8_t green, uint8_t blue)
-// {
-//     neopixelWrite(RGB_PIN, red, green, blue);
-// }
-
-// // helper function to convert microseconds to duty cycle for PWM
-// uint32_t servoMicrosecondsToDuty(uint16_t microseconds)
-// {
-//     const uint32_t max_duty = (1 << PWM_RES_BITS) - 1;
-//     return (microseconds * max_duty) / 20000; // 20ms period
-// }
-
-// // helper function to set servo position in microseconds
-// void setServoMicroseconds(uint8_t channel, uint16_t microseconds)
-// {
-//     if (microseconds < 1000)
-//         microseconds = 1000;
-//     if (microseconds > 2000)
-//         microseconds = 2000;
-
-//     uint32_t duty = servoMicrosecondsToDuty(microseconds);
-//     ledcWrite(channel, duty);
-// }
-
-// // helper function to send a message via ESP-NOW
-// void sendMessage(String msg)
-// {
-//     esp_err_t result = esp_now_send(peerAddress, (uint8_t *)msg.c_str(), msg.length() + 1);
-
-//     if (result == ESP_OK)
-//     {
-//         Serial.print("Sent: ");
-//         Serial.println(msg);
-//     }
-//     else
-//     {
-//         Serial.println("Error sending message");
-//     }
-// }
-
-// // ===== CORE 0 =====
-// // the work done on this core will be dedicated to processing the control loop of our monocopter.
-// // ==================
-// void controlLoop(void *parameter)
-// {
-//     Wire.begin(SDA, SCL, 400000);
-
-//     const uint32_t rate_period_us = 1000000 / RATE_LOOP_HZ;
-
-//     const TickType_t period = pdMS_TO_TICKS(1000 / RATE_LOOP_HZ);
-//     TickType_t prev_wake = xTaskGetTickCount();
-
-//     // performance tracking
-//     uint32_t loops_in_window = 0;
-//     uint32_t stats_window_start = millis();
-
-//     // local containers to avoid repeated allocations/locks
-//     float lgx, lgy, lgz;
-//     float lax, lay, laz;
-//     float lmx, lmy, lmz;
-
-//     Serial.println("[ControlLoop] Task started on Core 0");
-
-//     // ==== BEGIN CONTROL LOOP ====
-//     while (true)
-//     {
-//         uint32_t loop_start = micros();
-
-//         // === GRAB SENSOR DATA ===
-//         uint32_t t0 = micros();
-//         bool ok = mpu.update();
-//         uint32_t mpu_read_us = micros() - t0;
-
-//         if (ok)
-//         {
-//             lgx = mpu.getGyroX() - GX_BIAS;
-//             lgy = mpu.getGyroY() - GY_BIAS;
-//             lgz = mpu.getGyroZ() - GZ_BIAS;
-//             lax = mpu.getAccX();
-//             lay = mpu.getAccY();
-//             laz = mpu.getAccZ();
-
-//             lmx = mpu.getMagX();
-//             lmy = mpu.getMagY();
-//             lmz = mpu.getMagZ();
-
-//             cf.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz, 1.0f / RATE_LOOP_HZ);
-
-//             float roll = cf.getRoll();
-//             float pitch = cf.getPitch();
-//             float yaw = cf.getYaw();
-
-//             if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(2)) == pdTRUE)
-//             {
-//                 state.roll = roll;
-//                 state.pitch = pitch;
-//                 state.yaw = yaw;
-
-//                 state.gyro_x = lgx;
-//                 state.gyro_y = lgy;
-//                 state.gyro_z = lgz;
-
-//                 state.timestamp_ms = millis();
-//                 state.data_ready = true;
-//                 xSemaphoreGive(state_mutex);
-//             }
-//         }
-
-//         // === CONTROL ===
-//         crsf_update();
-
-//         if (armed)
-//         {
-//             // read transmitter input
-//             int16_t rx_throttle = crsf_get_channel(2); // 3->2
-//             int16_t rx_roll = crsf_get_channel(0);     // 1->3
-//             int16_t rx_pitch = crsf_get_channel(1);    // 2->1
-//             int16_t rx_yaw = crsf_get_channel(3);      // 4->3
-
-//             // normalize digital values
-//             auto norm = [](int16_t val)
-//             {
-//                 return (float)(val - 992) / 820.0f; // center at midpoint (992? for 172-1811)
-//             };
-//             float roll = norm(rx_roll);
-//             float pitch = norm(rx_pitch);
-//             float yaw = norm(rx_yaw);
-//             float throttle = (float)(rx_throttle - 172) / (1811 - 172);
-
-//             // print values every 100 loops
-//             static int print_counter = 0;
-//             if (++print_counter >= 10)
-//             {
-//                 print_counter = 0;
-//                 // Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
-//                 Serial.print("Throttle:");
-//                 Serial.print(rx_throttle);
-//                 Serial.print(",");
-//                 Serial.print("Roll:");
-//                 Serial.print(rx_roll);
-//                 Serial.print(",");
-//                 Serial.print("Pitch:");
-//                 Serial.print(rx_pitch);
-//                 Serial.print(",");
-//                 Serial.print("Yaw:");
-//                 Serial.println(rx_yaw);
-
-//                 // send data to other esp32
-//                 String msg = "T:" + String(rx_throttle) + ",R:" + String(rx_roll) + ",P:" + String(rx_pitch) + ",Y:" + String(rx_yaw);
-//                 sendMessage(msg);
-//             }
-
-//             // update motor outputs
-//             motor_update_from_crsf();
-//         }
-
-//         // === METRICS ===
-//         perf.mpu_read_us = mpu_read_us;
-//         perf.loop_time_us = micros() - loop_start;
-//         loops_in_window++;
-
-//         if (millis() - stats_window_start >= 1000)
-//         {
-//             perf.loop_count = loops_in_window;
-//             perf.free_heap = ESP.getFreeHeap();
-//             loops_in_window = 0;
-//             stats_window_start = millis();
-//         }
-//     }
-// }
-
-// void setup()
-// {
-//     Serial.begin(BAUD_RATE); // start serial comm for USB
-
-//     Serial.println("\n\nInitializing peripherals...\n\n");
-
-//     setrgb(255, 255, 0);
-
-//     Wire.begin(SDA_PIN, SCL_PIN);
-//     Wire.setClock(400000);
-
-//     // initialize wifi
-//     Serial.print("Initializing WiFi communications...");
-//     WiFi.mode(WIFI_STA);
-//     Serial.print("OK.\n");
-
-//     Serial.print("This board MAC Address: ");
-//     Serial.println(WiFi.macAddress());
-
-//     if (esp_now_init() != ESP_OK)
-//     {
-//         Serial.println("Error initializing ESP-NOW");
-//         return;
-//     }
-
-//     esp_now_register_send_cb(OnDataSent);
-
-//     memcpy(peerInfo.peer_addr, peerAddress, 6);
-//     peerInfo.channel = 0;
-//     peerInfo.encrypt = false;
-
-//     if (esp_now_add_peer(&peerInfo) != ESP_OK)
-//     {
-//         Serial.println("Failed to add peer");
-//         return;
-//     }
-//     else {
-//         sendMessage("Hello from main esp32");
-//     }
-
-//     Serial.print("Initializing MPU9250 sensor...");
-//     /*initialize MPU9250
-//     if (!mpu.setup(0x68))
-//     {
-//         Serial.print("FAILED.\n");
-//         setrgb(255, 0, 0);
-//         while(1)
-//         {
-//             delay(1);
-//         }
-//     }
-//     Serial.print("OK...");
-//     */
-
-//     // calibrate sensors (assumes device is stationary, optional in the future)
-//     // mpu.calibrateAccelGyro();
-//     Serial.print("GYRO/ACCEL OK...");
-//     delay(1000);
-//     // mpu.calibrateMag();
-//     Serial.print("MAG OK.\n");
-
-//     Wire.setClock(400000);
-
-//     // mpu.setMagneticDeclination(0);
-
-//     /*
-//     Serial.print("SETTING FILTER TO MADGWICK...");
-//     mpu.selectFilter(QuatFilterSel::MADGWICK);
-//     Serial.print("OK\n");
-//     */
-
-//     // mpu.setFilterIterations(1);
-
-//     /*
-//     Serial.println("Initializing web server...");
-//     if(initServer() < 0)
-//     {
-//         Serial.print("FAILED.");
-//         while (true)
-//         {
-//             delay(1);
-//         }
-//     }
-//     Serial.print("OK.");
-//     */
-
-//     // create mutex
-//     state_mutex = xSemaphoreCreateMutex();
-//     if (!state_mutex)
-//     {
-//         Serial.println("ERROR: Failed to create mutex");
-//         setrgb(255, 0, 0);
-//         while (true)
-//             delay(1);
-//     }
-
-//     // bind control loop task to its own core (Core 0)
-//     xTaskCreatePinnedToCore(
-//         controlLoop,
-//         "ControLoop",
-//         8192, // memory size (deterministic and no dynamic allocation so shouldn't matter)
-//         NULL,
-//         3, // higher priority than logging task
-//         NULL,
-//         0);
-
-//     // === TIMER INIT ===
-//     Serial.print("Initializing timer...");
-//     motor_init();
-//     Serial.print("OK.\n");
-
-//     Serial.print("Initializing UART CRSF receiver...");
-//     crsf_init();
-//     Serial.print("OK.\n");
-
-//     motor_arm(true);
-//     armed = true;
-
-//     setrgb(0, 255, 0);
-// }
-
-// // ===== CORE 1 =====
-// // the work done on this core will be dedicated to logging and grabbing data from our monocopter
-// // ==================
-// void loop()
-// {
-//     /*
-//     static uint32_t last_print_time = 0;
-//     static uint32_t last_stats_time = 0;
-//     static float last_roll = 0, last_pitch = 0, last_yaw = 0;
-//     const float THRESHOLD_DEG = 1.5f;      // degrees change required to trigger print
-//     const uint32_t PRINT_INTERVAL_MS = 100; // minimum interval between prints
-//     const uint32_t STATS_INTERVAL_MS = 5000; // summary print every 5s
-
-//     /* Check for significant attitude change
-//     if (millis() - last_print_time >= PRINT_INTERVAL_MS)
-//     {
-//         if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(10)) == pdTRUE)
-//         {
-//             float d_roll  = fabs(state.roll  - last_roll);
-//             float d_pitch = fabs(state.pitch - last_pitch);
-//             float d_yaw   = fabs(state.yaw   - last_yaw);
-
-//             if (d_roll > THRESHOLD_DEG || d_pitch > THRESHOLD_DEG || d_yaw > THRESHOLD_DEG)
-//             {
-//                 Serial.printf("Δ roll: %.2f°, pitch: %.2f°, yaw: %.2f°  |  RPY: %.2f, %.2f, %.2f\n",
-//                               d_roll, d_pitch, d_yaw, state.roll, state.pitch, state.yaw);
-
-//                 last_roll = state.roll;
-//                 last_pitch = state.pitch;
-//                 last_yaw = state.yaw;
-//                 last_print_time = millis();
-//             }
-
-//             xSemaphoreGive(state_mutex);
-//         }
-//     }
-
-
-//     static uint32_t lastPrint = 0;
-//     if (millis() - lastPrint >= 50) { // ~20 Hz print rate
-//         lastPrint = millis();
-
-//         if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-//             Serial.printf("Roll:%.2f, Pitch:%.2f, Yaw:%.2f\n", state.roll, state.pitch, state.yaw);
-//             xSemaphoreGive(state_mutex);
-//         }
-//     }
-
-//     // Print a short summary every few seconds
-//     if (millis() - last_stats_time >= STATS_INTERVAL_MS)
-//     {
-//         last_stats_time = millis();
-//         Serial.printf("[Core1] Loop alive | Heap: %lu bytes | Stack watermark: %lu | Read time: %lu\n", esp_get_free_heap_size(), uxTaskGetStackHighWaterMark(NULL), perf.mpu_read_us);
-//     }
-
-//     vTaskDelay(pdMS_TO_TICKS(5)); // don’t hog CPU
-//     */
-// }
+#include "cf.h"
+#include "metric.h"
+#include "config.h"
+#include "control.h"
+#include "crsf_rc.h"
+#include "driver/ledc.h"
+#include <Arduino.h>
+#include <WiFi.h>
+#include <Wire.h>
+#include <MPU9250.h>
+#include <esp_now.h>
+
+// esp now communications
+uint8_t peerAddress[] = {0x50, 0x78, 0x7D, 0x16, 0x34, 0xF8};
+esp_now_peer_info_t peerInfo;
+
+// todo: do we want a on data receive?
+// data sent callback
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+{
+    Serial.print("Send Status:\t");
+    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
+}
+
+// PWMChannel pwm_channels[4];
+bool armed;
+
+Performance perf;
+FlightState state;
+CF cf(ALPHA);
+int channels[] = {EDF_CHANNEL, SERVO1_CHANNEL, SERVO2_CHANNEL, SERVO3_CHANNEL, SERVO4_CHANNEL};
+int pins[] = {EDF_PIN, SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN};
+
+// library MPU9250 object
+MPU9250 mpu;
+
+// mutex for thread-safe access to our flight state
+SemaphoreHandle_t state_mutex;
+
+// helper function for LEDs indicating FC status
+void setrgb(uint8_t red, uint8_t green, uint8_t blue)
+{
+    neopixelWrite(RGB_PIN, red, green, blue);
+}
+
+// helper function to convert microseconds to duty cycle for PWM
+uint32_t servoMicrosecondsToDuty(uint16_t microseconds)
+{
+    const uint32_t max_duty = (1 << PWM_RES_BITS) - 1;
+    return (microseconds * max_duty) / 20000; // 20ms period
+}
+
+// helper function to set servo position in microseconds
+void setServoMicroseconds(uint8_t channel, uint16_t microseconds)
+{
+    if (microseconds < 1000)
+        microseconds = 1000;
+    if (microseconds > 2000)
+        microseconds = 2000;
+
+    uint32_t duty = servoMicrosecondsToDuty(microseconds);
+    ledcWrite(channel, duty);
+}
+
+// helper function to send a message via ESP-NOW
+void sendMessage(String msg)
+{
+    esp_err_t result = esp_now_send(peerAddress, (uint8_t *)msg.c_str(), msg.length() + 1);
+
+    if (result == ESP_OK)
+    {
+        Serial.print("Sent: ");
+        Serial.println(msg);
+    }
+    else
+    {
+        Serial.println("Error sending message");
+    }
+}
+
+// ===== CORE 0 =====
+// the work done on this core will be dedicated to processing the control loop of our monocopter.
+// ==================
+void controlLoop(void *parameter)
+{
+    Wire.begin(SDA, SCL, 400000);
+
+    const uint32_t rate_period_us = 1000000 / RATE_LOOP_HZ;
+
+    const TickType_t period = pdMS_TO_TICKS(1000 / RATE_LOOP_HZ);
+    TickType_t prev_wake = xTaskGetTickCount();
+
+    // performance tracking
+    uint32_t loops_in_window = 0;
+    uint32_t stats_window_start = millis();
+
+    // local containers to avoid repeated allocations/locks
+    float lgx, lgy, lgz;
+    float lax, lay, laz;
+    float lmx, lmy, lmz;
+
+    Serial.println("[ControlLoop] Task started on Core 0");
+
+    // ==== BEGIN CONTROL LOOP ====
+    while (true)
+    {
+        uint32_t loop_start = micros();
+
+        // === GRAB SENSOR DATA ===
+        uint32_t t0 = micros();
+        bool ok = mpu.update();
+        uint32_t mpu_read_us = micros() - t0;
+
+        if (ok)
+        {
+            lgx = mpu.getGyroX() - GX_BIAS;
+            lgy = mpu.getGyroY() - GY_BIAS;
+            lgz = mpu.getGyroZ() - GZ_BIAS;
+            lax = mpu.getAccX();
+            lay = mpu.getAccY();
+            laz = mpu.getAccZ();
+
+            lmx = mpu.getMagX();
+            lmy = mpu.getMagY();
+            lmz = mpu.getMagZ();
+
+            cf.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz, 1.0f / RATE_LOOP_HZ);
+
+            float roll = cf.getRoll();
+            float pitch = cf.getPitch();
+            float yaw = cf.getYaw();
+
+            if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(2)) == pdTRUE)
+            {
+                state.roll = roll;
+                state.pitch = pitch;
+                state.yaw = yaw;
+
+                state.gyro_x = lgx;
+                state.gyro_y = lgy;
+                state.gyro_z = lgz;
+
+                state.timestamp_ms = millis();
+                state.data_ready = true;
+                xSemaphoreGive(state_mutex);
+            }
+
+            String msg = "R:" + String(roll) + ",P:" + String(pitch) + ",Y:" + String(yaw);
+            sendMessage(msg);
+        }
+
+        // === CONTROL ===
+        crsf_update();
+
+        if (armed)
+        {
+            // read transmitter input
+            int16_t rx_throttle = crsf_get_channel(2); // 3->2
+            int16_t rx_roll = crsf_get_channel(0);     // 1->3
+            int16_t rx_pitch = crsf_get_channel(1);    // 2->1
+            int16_t rx_yaw = crsf_get_channel(3);      // 4->3
+
+            // normalize digital values
+            auto norm = [](int16_t val)
+            {
+                return (float)(val - 992) / 820.0f; // center at midpoint (992? for 172-1811)
+            };
+            float roll = norm(rx_roll);
+            float pitch = norm(rx_pitch);
+            float yaw = norm(rx_yaw);
+            float throttle = (float)(rx_throttle - 172) / (1811 - 172);
+
+            // print values every 100 loops
+            static int print_counter = 0;
+            if (++print_counter >= 10)
+            {
+                print_counter = 0;
+                // Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
+                Serial.print("Throttle:");
+                Serial.print(rx_throttle);
+                Serial.print(",");
+                Serial.print("Roll:");
+                Serial.print(rx_roll);
+                Serial.print(",");
+                Serial.print("Pitch:");
+                Serial.print(rx_pitch);
+                Serial.print(",");
+                Serial.print("Yaw:");
+                Serial.println(rx_yaw);
+            }
+
+            // send data to other esp32
+            String msg = "T:" + String(rx_throttle) + ",R:" + String(rx_roll) + ",P:" + String(rx_pitch) + ",Y:" + String(rx_yaw);
+            sendMessage(msg);
+
+            
+            // update motor outputs
+            motor_update_from_crsf();
+        }
+
+        // === METRICS ===
+        perf.mpu_read_us = mpu_read_us;
+        perf.loop_time_us = micros() - loop_start;
+        loops_in_window++;
+
+        if (millis() - stats_window_start >= 1000)
+        {
+            perf.loop_count = loops_in_window;
+            perf.free_heap = ESP.getFreeHeap();
+            loops_in_window = 0;
+            stats_window_start = millis();
+        }
+    }
+}
+
+void setup()
+{
+    Serial.begin(BAUD_RATE); // start serial comm for USB
+
+    Serial.println("\n\nInitializing peripherals...\n\n");
+
+    setrgb(255, 255, 0);
+
+    Wire.begin(SDA_PIN, SCL_PIN);
+    Wire.setClock(400000);
+
+    // initialize wifi
+    Serial.print("Initializing WiFi communications...");
+    WiFi.mode(WIFI_STA);
+    Serial.print("OK.\n");
+
+    Serial.print("This board MAC Address: ");
+    Serial.println(WiFi.macAddress());
+
+    if (esp_now_init() != ESP_OK)
+    {
+        Serial.println("Error initializing ESP-NOW");
+        return;
+    }
+
+    esp_now_register_send_cb(OnDataSent);
+
+    memcpy(peerInfo.peer_addr, peerAddress, 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) != ESP_OK)
+    {
+        Serial.println("Failed to add peer");
+        return;
+    }
+    else
+    {
+        sendMessage("Hello from main esp32");
+    }
+
+    Serial.print("Initializing MPU9250 sensor...");
+    /*initialize MPU9250
+    if (!mpu.setup(0x68))
+    {
+        Serial.print("FAILED.\n");
+        setrgb(255, 0, 0);
+        while(1)
+        {
+            delay(1);
+        }
+    }
+    Serial.print("OK...");
+    */
+
+    // calibrate sensors (assumes device is stationary, optional in the future)
+    // mpu.calibrateAccelGyro();
+    Serial.print("GYRO/ACCEL OK...");
+    delay(1000);
+    // mpu.calibrateMag();
+    Serial.print("MAG OK.\n");
+
+    Wire.setClock(400000);
+
+    // mpu.setMagneticDeclination(0);
+
+    /*
+    Serial.print("SETTING FILTER TO MADGWICK...");
+    mpu.selectFilter(QuatFilterSel::MADGWICK);
+    Serial.print("OK\n");
+    */
+
+    // mpu.setFilterIterations(1);
+
+    /*
+    Serial.println("Initializing web server...");
+    if(initServer() < 0)
+    {
+        Serial.print("FAILED.");
+        while (true)
+        {
+            delay(1);
+        }
+    }
+    Serial.print("OK.");
+    */
+
+    // create mutex
+    state_mutex = xSemaphoreCreateMutex();
+    if (!state_mutex)
+    {
+        Serial.println("ERROR: Failed to create mutex");
+        setrgb(255, 0, 0);
+        while (true)
+            delay(1);
+    }
+
+    // bind control loop task to its own core (Core 0)
+    xTaskCreatePinnedToCore(
+        controlLoop,
+        "ControLoop",
+        8192, // memory size (deterministic and no dynamic allocation so shouldn't matter)
+        NULL,
+        3, // higher priority than logging task
+        NULL,
+        0);
+
+    // === TIMER INIT ===
+    Serial.print("Initializing timer...");
+    motor_init();
+    Serial.print("OK.\n");
+
+    Serial.print("Initializing UART CRSF receiver...");
+    crsf_init();
+    Serial.print("OK.\n");
+
+    motor_arm(true);
+    armed = true;
+
+    setrgb(0, 255, 0);
+}
+
+// ===== CORE 1 =====
+// the work done on this core will be dedicated to logging and grabbing data from our monocopter
+// ==================
+void loop()
+{
+    /*
+    static uint32_t last_print_time = 0;
+    static uint32_t last_stats_time = 0;
+    static float last_roll = 0, last_pitch = 0, last_yaw = 0;
+    const float THRESHOLD_DEG = 1.5f;      // degrees change required to trigger print
+    const uint32_t PRINT_INTERVAL_MS = 100; // minimum interval between prints
+    const uint32_t STATS_INTERVAL_MS = 5000; // summary print every 5s
+
+    /* Check for significant attitude change
+    if (millis() - last_print_time >= PRINT_INTERVAL_MS)
+    {
+        if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(10)) == pdTRUE)
+        {
+            float d_roll  = fabs(state.roll  - last_roll);
+            float d_pitch = fabs(state.pitch - last_pitch);
+            float d_yaw   = fabs(state.yaw   - last_yaw);
+
+            if (d_roll > THRESHOLD_DEG || d_pitch > THRESHOLD_DEG || d_yaw > THRESHOLD_DEG)
+            {
+                Serial.printf("Δ roll: %.2f°, pitch: %.2f°, yaw: %.2f°  |  RPY: %.2f, %.2f, %.2f\n",
+                              d_roll, d_pitch, d_yaw, state.roll, state.pitch, state.yaw);
+
+                last_roll = state.roll;
+                last_pitch = state.pitch;
+                last_yaw = state.yaw;
+                last_print_time = millis();
+            }
+
+            xSemaphoreGive(state_mutex);
+        }
+    }
+
+
+    static uint32_t lastPrint = 0;
+    if (millis() - lastPrint >= 50) { // ~20 Hz print rate
+        lastPrint = millis();
+
+        if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            Serial.printf("Roll:%.2f, Pitch:%.2f, Yaw:%.2f\n", state.roll, state.pitch, state.yaw);
+            xSemaphoreGive(state_mutex);
+        }
+    }
+
+    // Print a short summary every few seconds
+    if (millis() - last_stats_time >= STATS_INTERVAL_MS)
+    {
+        last_stats_time = millis();
+        Serial.printf("[Core1] Loop alive | Heap: %lu bytes | Stack watermark: %lu | Read time: %lu\n", esp_get_free_heap_size(), uxTaskGetStackHighWaterMark(NULL), perf.mpu_read_us);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(5)); // don’t hog CPU
+    */
+}

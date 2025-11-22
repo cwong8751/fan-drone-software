@@ -6,13 +6,16 @@
 #include <WebServer.h>
 #include <LittleFS.h>
 
-bool simulate = true; // Set to false when using real ESP-NOW
+bool simulate = false; // Set to false when using real ESP-NOW
 unsigned long lastSim = 0;
 
 WebServer server(80);
 
 int valT = 0, valR = 0, valP = 0, valY = 0;
 bool hasTRPY = false;
+
+float fcRoll = 0, fcPitch = 0, fcYaw = 0;
+bool hasFC = false;
 
 // ⚙️ Replace with the MAC address of the *other* ESP32
 // Example MACs (replace with your own):
@@ -52,6 +55,26 @@ void parseTRPY(String msg)
   hasTRPY = true;
 }
 
+void parseFC(String msg)
+{
+  // Example: "R:12.34,P:-4.0,Y:180.2"
+  if (!msg.startsWith("R:"))
+    return;
+
+  int rIndex = msg.indexOf("R:");
+  int pIndex = msg.indexOf("P:");
+  int yIndex = msg.indexOf("Y:");
+
+  if (rIndex < 0 || pIndex < 0 || yIndex < 0)
+    return;
+
+  fcRoll = msg.substring(rIndex + 2, pIndex - 1).toFloat();
+  fcPitch = msg.substring(pIndex + 2, yIndex - 1).toFloat();
+  fcYaw = msg.substring(yIndex + 2).toFloat();
+
+  hasFC = true;
+}
+
 void generateFakeTRPY()
 {
   int T = random(150, 2000); // throttle range
@@ -87,7 +110,14 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
   Serial.print("Received: ");
   Serial.println(incomingMessage);
 
-  parseTRPY(String(incomingMessage));
+  if (String(incomingMessage).startsWith("T:"))
+  {
+    parseTRPY(String(incomingMessage));
+  }
+  else if (String(incomingMessage).startsWith("R:"))
+  {
+    parseFC(String(incomingMessage));
+  }
 
   // 📤 Send reply message
   String replyMessage = "message received";
@@ -106,21 +136,17 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
 void handleRoot()
 {
   server.send(200, "text/html",
-              "<html>"
-              "<head>"
-              "<title>ESP32 Live Telemetry</title>"
+              "<html><head>"
               "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+              "<title>ESP32 Telemetry</title>"
               "<style>"
-              "body { font-family: Arial; padding:20px; }"
-              ".box { border:1px solid #444; padding:15px; width:260px; margin-bottom:20px; }"
-              "canvas { width:100%; max-width:800px; height:400px; }"
+              "body{font-family:Arial;padding:20px;}"
+              ".box{border:1px solid #444;padding:15px;width:260px;margin-bottom:20px;}"
+              "canvas{border:1px solid #444;width:100%;max-width:800px;height:300px;}"
               "</style>"
-              "<script src='/chart.js'></script>"
-              "</head>"
+              "</head><body>"
 
-              "<body>"
               "<h2>ESP32 Live Telemetry</h2>"
-
               "<div class='box'>"
               "<b>Throttle:</b> <span id='t'>--</span><br>"
               "<b>Roll:</b> <span id='r'>--</span><br>"
@@ -128,62 +154,140 @@ void handleRoot()
               "<b>Yaw:</b> <span id='y'>--</span><br>"
               "</div>"
 
-              "<canvas id='chart'></canvas>"
+              "<canvas id='chart' width='800' height='300'></canvas>"
+
+              // "<script>"
+              // "let c=document.getElementById('chart');"
+              // "let ctx=c.getContext('2d');"
+              // "let maxPts=200;"
+              // "let t=[],r=[],p=[],y=[];"
+
+              // "function drawLine(arr,color){"
+              // " if(arr.length<2) return;"
+              // " ctx.beginPath(); ctx.strokeStyle=color;"
+              // " for(let i=0;i<arr.length;i++){"
+              // "   let x=(i/maxPts)*c.width;"
+              // "   let yy=c.height - (arr[i]/2000)*c.height;"
+              // "   if(i==0) ctx.moveTo(x,yy); else ctx.lineTo(x,yy);"
+              // " }"
+              // " ctx.stroke();"
+              // "}"
+
+              // "function draw(){"
+              // " ctx.clearRect(0,0,c.width,c.height);"
+              // " drawLine(t,'red');"
+              // " drawLine(r,'green');"
+              // " drawLine(p,'blue');"
+              // " drawLine(y,'orange');"
+              // "}"
+
+              // "function update(){"
+              // " fetch('/data').then(x=>x.json()).then(j=>{"
+              // "   document.getElementById('t').innerHTML=j.T;"
+              // "   document.getElementById('r').innerHTML=j.R;"
+              // "   document.getElementById('p').innerHTML=j.P;"
+              // "   document.getElementById('y').innerHTML=j.Y;"
+
+              // "   t.push(j.T); r.push(j.R); p.push(j.P); y.push(j.Y);"
+              // "   if(t.length>maxPts){t.shift();r.shift();p.shift();y.shift();}"
+
+              // "   draw();"
+              // " });"
+              // "}"
+
+              // "setInterval(update,200);"
+              // "</script>"
 
               "<script>"
-              "const ctx = document.getElementById('chart').getContext('2d');"
+              "let c=document.getElementById('chart');"
+              "let ctx=c.getContext('2d');"
 
-              "const chart = new Chart(ctx, {"
-              "type: 'line',"
-              "data: {"
-              "labels: [],"
-              "datasets: ["
-              "{ label: 'Throttle', borderColor:'red', data:[], fill:false },"
-              "{ label: 'Roll', borderColor:'green', data:[], fill:false },"
-              "{ label: 'Pitch', borderColor:'blue', data:[], fill:false },"
-              "{ label: 'Yaw', borderColor:'orange', data:[], fill:false }"
-              "]"
-              "},"
-              "options: {"
-              "animation: false,"
-              "responsive: true,"
-              "scales: {"
-              "x: { display: false },"
-              "y: { beginAtZero:false }"
-              "}"
-              "}"
-              "});"
+              "let c2=document.getElementById('fcchart');"
+              "let ctx2=c2.getContext('2d');"
 
-              "function updateData(){"
-              "fetch('/data')"
-              ".then(res => res.json())"
-              ".then(j => {"
-              "document.getElementById('t').innerHTML = j.T;"
-              "document.getElementById('r').innerHTML = j.R;"
-              "document.getElementById('p').innerHTML = j.P;"
-              "document.getElementById('y').innerHTML = j.Y;"
+              "let maxPts=200;"
 
-              "// ---- Push new data to graph ----"
-              "chart.data.labels.push(''); /* blank label for scrolling */"
-              "chart.data.datasets[0].data.push(j.T);"
-              "chart.data.datasets[1].data.push(j.R);"
-              "chart.data.datasets[2].data.push(j.P);"
-              "chart.data.datasets[3].data.push(j.Y);"
+              // TRPY arrays (RC transmitter)
+              "let t=[],r=[],p=[],y=[];"
 
-              "// ---- Limit graph length ----"
-              "if (chart.data.labels.length > 80) {" // keep last 80 samples
-              "chart.data.labels.shift();"
-              "chart.data.datasets.forEach(ds => ds.data.shift());"
+              // FC attitude arrays (from monocopter)
+              "let fr=[], fp=[], fy=[];"
+
+              // ----- DRAW TRPY GRAPH -----
+              "function drawLine(ctx, arr, color, scale){"
+              " if(arr.length<2) return;"
+              " ctx.beginPath(); ctx.strokeStyle=color;"
+              " for(let i=0;i<arr.length;i++){"
+              "   let x=(i/maxPts)*ctx.canvas.width;"
+              "   let yy=ctx.canvas.height - (arr[i]/scale)*ctx.canvas.height;"
+              "   if(i===0) ctx.moveTo(x,yy); else ctx.lineTo(x,yy);"
+              " }"
+              " ctx.stroke();"
               "}"
 
-              "chart.update();"
-              "});"
+              "function drawTRPY(){"
+              " ctx.clearRect(0,0,c.width,c.height);"
+              " drawLine(ctx,t,'red',2000);"    // throttle
+              " drawLine(ctx,r,'green',2000);"  // roll
+              " drawLine(ctx,p,'blue',2000);"   // pitch
+              " drawLine(ctx,y,'orange',2000);" // yaw
               "}"
 
-              "setInterval(updateData, 200); /* refresh rate */"
+              // ----- DRAW FC ORIENTATION GRAPH -----
+              "function drawFC(){"
+              " ctx2.clearRect(0,0,c2.width,c2.height);"
+
+              " function dl(a,color){"
+              "   if(a.length<2) return;"
+              "   ctx2.beginPath(); ctx2.strokeStyle=color;"
+              "   for(let i=0;i<a.length;i++){"
+              "     let x=(i/maxPts)*c2.width;"
+              "     let yy=c2.height - ((a[i] + 180) / 360) * c2.height;" // map -180..180
+              "     if(i===0) ctx2.moveTo(x,yy); else ctx2.lineTo(x,yy);"
+              "   }"
+              "   ctx2.stroke();"
+              " }"
+
+              " dl(fr,'magenta');"
+              " dl(fp,'cyan');"
+              " dl(fy,'yellow');"
+              "}"
+
+              // ----- UPDATE TRPY DATA (/data) -----
+              "function updateTRPY(){"
+              " fetch('/data').then(r=>r.json()).then(j=>{"
+              "   document.getElementById('t').innerHTML=j.T;"
+              "   document.getElementById('r').innerHTML=j.R;"
+              "   document.getElementById('p').innerHTML=j.P;"
+              "   document.getElementById('y').innerHTML=j.Y;"
+
+              "   t.push(j.T); r.push(j.R); p.push(j.P); y.push(j.Y);"
+              "   if(t.length>maxPts){t.shift();r.shift();p.shift();y.shift();}"
+
+              "   drawTRPY();"
+              " });"
+              "}"
+
+              // ----- UPDATE FLIGHT CONTROLLER DATA (/fcdata) -----
+              "function updateFC(){"
+              " fetch('/fcdata').then(r=>r.json()).then(j=>{"
+
+              "   fr.push(j.roll);"
+              "   fp.push(j.pitch);"
+              "   fy.push(j.yaw);"
+
+              "   if(fr.length>maxPts){fr.shift();fp.shift();fy.shift();}"
+
+              "   drawFC();"
+              " });"
+              "}"
+
+              // ----- CALL BOTH -----
+              "setInterval(() => { updateTRPY(); updateFC(); }, 200);"
+
               "</script>"
-              "</body>"
-              "</html>");
+
+              "</body></html>");
 }
 
 // ---- JSON TELEMETRY ENDPOINT ----
@@ -196,6 +300,16 @@ void handleData()
   json += "\"Y\":" + String(valY);
   json += "}";
 
+  server.send(200, "application/json", json);
+}
+
+void handleFCData()
+{
+  String json = "{";
+  json += "\"roll\":" + String(fcRoll) + ",";
+  json += "\"pitch\":" + String(fcPitch) + ",";
+  json += "\"yaw\":" + String(fcYaw);
+  json += "}";
   server.send(200, "application/json", json);
 }
 
@@ -279,8 +393,9 @@ void setup()
 
   server.on("/", handleRoot);
   server.on("/data", handleData);
+  server.on("/fcdata", handleFCData);
 
-  // handler for chart.js we're getting it from littlefs 
+  // handler for chart.js we're getting it from littlefs
   server.on("/chart.js", HTTP_GET, []()
             {
   File file = LittleFS.open("/chart.js", "r");
