@@ -34,10 +34,22 @@ struct FlightState
 };
 extern FlightState state;
 
+struct PID {
+    float pid_roll_rate;
+    float pid_pitch_rate;
+    float pid_yaw_rate;
+
+    float pid_roll_angle;
+    float pid_pitch_angle;
+};
+
 void motor_init();
 void setup_pwm_timer();
 void setup_pwm_config();
 void motor_update_from_crsf();
 void motor_arm(bool arm);
 void write_us(uint8_t channel, uint16_t usec);
+
+
+
 #endif // CONTROL_H

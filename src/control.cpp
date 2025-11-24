@@ -6,6 +6,11 @@
 
 static bool armed = false;
 
+enum FlightMode {
+    RATE_MODE, // direct rate control
+    ANGLE_MODE // self leveling
+};
+
 void setup_pwm_timer()
 {
     ledc_timer_config_t timer {

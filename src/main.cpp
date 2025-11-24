@@ -10,7 +10,6 @@
 #include <Wire.h>
 #include <MPU9250.h>
 
-//PWMChannel pwm_channels[4];
 bool armed;
 
 Performance perf;
