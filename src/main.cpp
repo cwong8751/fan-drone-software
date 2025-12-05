@@ -8,7 +8,13 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
-#include <MPU9250.h>
+// #include <MPU9250.h>
+
+// library definitions for the new sensors
+#include "Adafruit_LSM6DSOX.h"
+#include <Adafruit_LIS3MDL.h>
+#include <Adafruit_Sensor.h>
+#include <MS5x.h>
 
 bool armed;
 
@@ -19,7 +25,12 @@ int channels[] = {EDF_CHANNEL, SERVO1_CHANNEL, SERVO2_CHANNEL, SERVO3_CHANNEL, S
 int pins[] = {EDF_PIN, SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN};
 
 // library MPU9250 object
-MPU9250 mpu;
+// MPU9250 mpu;
+
+// Define the new sensors to be used
+MS5x barometer(&Wire);
+Adafruit_LIS3MDL lis3mdl;
+Adafruit_LSM6DSOX sox;
 
 // mutex for thread-safe access to our flight state
 SemaphoreHandle_t state_mutex;
@@ -27,7 +38,7 @@ SemaphoreHandle_t state_mutex;
 // helper function for LEDs indicating FC status
 void setrgb(uint8_t red, uint8_t green, uint8_t blue)
 {
-  neopixelWrite(RGB_PIN, red, green, blue);
+    neopixelWrite(RGB_PIN, red, green, blue);
 }
 
 // helper function to convert microseconds to duty cycle for PWM
@@ -40,8 +51,10 @@ uint32_t servoMicrosecondsToDuty(uint16_t microseconds)
 // helper function to set servo position in microseconds
 void setServoMicroseconds(uint8_t channel, uint16_t microseconds)
 {
-    if (microseconds < 1000) microseconds = 1000;
-    if (microseconds > 2000) microseconds = 2000;
+    if (microseconds < 1000)
+        microseconds = 1000;
+    if (microseconds > 2000)
+        microseconds = 2000;
 
     uint32_t duty = servoMicrosecondsToDuty(microseconds);
     ledcWrite(channel, duty);
@@ -70,29 +83,80 @@ void controlLoop(void *parameter)
 
     Serial.println("[ControlLoop] Task started on Core 0");
 
+    // initialize the barometer according to example
+    // https://github.com/abishur/ms5x/blob/main/examples/AdvancedMS5x/AdvancedMS5x.ino
+    barometer.setI2Caddr(I2C_LOW);             // according to docs I2C_LOW is 0x76
+    barometer.setSamples(MS5xxx_CMD_ADC_4096); // this sets the sampling rate. according to docs this is the best
+    barometer.setDelay(0);                     // barometer delay, 0 = real time
+
+    // barometer offsets, I dont know if we need this or not
+    // barometer.setTOffset(0);
+    // barometer.setPOffset(0);
+
+    if (barometer.connect() > 0)
+    {
+        Serial.print("FAILED.\n");
+        setrgb(255, 0, 0);
+        while (1)
+        {
+            delay(1);
+        }
+    }
+    Serial.print("Barometer OK...\n");
+
+    // define sensor variables
+    sensors_event_t accel, gyro, temp, mag; // for LSM6DSOX and LIS3MDL
+
+    // data for barometer
+    float current_pressure = 0.0f;
+    float current_temperature = 0.0f;
+    double seaLevelPressure = 0.0;
+
     // ==== BEGIN CONTROL LOOP ====
     while (true)
     {
         uint32_t loop_start = micros();
-
-        // === GRAB SENSOR DATA ===
         uint32_t t0 = micros();
-        bool ok = mpu.update();
-        uint32_t mpu_read_us = micros() - t0;
 
-        if (ok)
+        // grabbing data from sensors
+
+        // get event from lsdmsox
+        sox.getEvent(&accel, &gyro, &temp);
+
+        // get event from lis3mdl
+        lis3mdl.getEvent(&mag);
+
+        // get event from barometer , NOTE: barometer operates nonblocking
+        barometer.checkUpdates();
+        if (barometer.isReady())
         {
-            lgx = mpu.getGyroX() - GX_BIAS;
-            lgy = mpu.getGyroY() - GY_BIAS;
-            lgz = mpu.getGyroZ() - GZ_BIAS;
-            lax = mpu.getAccX();
-            lay = mpu.getAccY();
-            laz = mpu.getAccZ();
+            current_temperature = barometer.GetTemp();
+            current_pressure = barometer.GetPres(); // Pressure in Pascals
 
-            lmx = mpu.getMagX();
-            lmy = mpu.getMagY();
-            lmz = mpu.getMagZ();
+            // from gemini:
+            // If we needed altitude (e.g., for altitude hold), we'd calculate it here:
+            // if (seaLevelPressure == 0) seaLevelPressure = barometer.getSeaLevel(current_temperature);
+            // float altitude = barometer.getAltitude(true); // true = with temperature correction
+        }
 
+        // GYRO: rad/s -> deg/s (180/PI)
+        lgx = gyro.gyro.x * (180.0f / M_PI) - GX_BIAS;
+        lgy = gyro.gyro.y * (180.0f / M_PI) - GY_BIAS;
+        lgz = gyro.gyro.z * (180.0f / M_PI) - GZ_BIAS;
+
+        // ACCEL: m/s^2 -> G (Divide by 9.80665 m/s^2)
+        lax = accel.acceleration.x / 9.80665f;
+        lay = accel.acceleration.y / 9.80665f;
+        laz = accel.acceleration.z / 9.80665f;
+
+        // MAG Mapping (uTesla)
+        lmx = mag.magnetic.x;
+        lmy = mag.magnetic.y;
+        lmz = mag.magnetic.z;
+
+        uint32_t sensor_read_us = micros() - t0;
+
+        {
             cf.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz, 1.0f / RATE_LOOP_HZ);
 
             float roll = cf.getRoll();
@@ -111,20 +175,66 @@ void controlLoop(void *parameter)
 
                 state.timestamp_ms = millis();
                 state.data_ready = true;
+
+                // // add pressure 
+                // I have commented this out because it doesnt exist in FlightState
+                // state.pressure = current_pressure; 
+                // state.temperature = current_temperature;
+
                 xSemaphoreGive(state_mutex);
             }
         }
 
+        // // === GRAB SENSOR DATA ===
+
+        // bool ok = mpu.update();
+        // uint32_t mpu_read_us = micros() - t0;
+
+        // if (ok)
+        // {
+        //     lgx = mpu.getGyroX() - GX_BIAS;
+        //     lgy = mpu.getGyroY() - GY_BIAS;
+        //     lgz = mpu.getGyroZ() - GZ_BIAS;
+        //     lax = mpu.getAccX();
+        //     lay = mpu.getAccY();
+        //     laz = mpu.getAccZ();
+
+        //     lmx = mpu.getMagX();
+        //     lmy = mpu.getMagY();
+        //     lmz = mpu.getMagZ();
+
+        //     cf.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz, 1.0f / RATE_LOOP_HZ);
+
+        //     float roll = cf.getRoll();
+        //     float pitch = cf.getPitch();
+        //     float yaw = cf.getYaw();
+
+        //     if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(2)) == pdTRUE)
+        //     {
+        //         state.roll = roll;
+        //         state.pitch = pitch;
+        //         state.yaw = yaw;
+
+        //         state.gyro_x = lgx;
+        //         state.gyro_y = lgy;
+        //         state.gyro_z = lgz;
+
+        //         state.timestamp_ms = millis();
+        //         state.data_ready = true;
+        //         xSemaphoreGive(state_mutex);
+        //     }
+        // }
+
         // === CONTROL ===
         crsf_update();
-        
+
         if (armed)
         {
             // read transmitter input
-            int16_t rx_throttle = crsf_get_channel(2); // 3->2 
-            int16_t rx_roll = crsf_get_channel(0); // 1->3
-            int16_t rx_pitch = crsf_get_channel(1); // 2->1
-            int16_t rx_yaw = crsf_get_channel(3); // 4->3
+            int16_t rx_throttle = crsf_get_channel(2); // 3->2
+            int16_t rx_roll = crsf_get_channel(0);     // 1->3
+            int16_t rx_pitch = crsf_get_channel(1);    // 2->1
+            int16_t rx_yaw = crsf_get_channel(3);      // 4->3
 
             // normalize digital values
             auto norm = [](int16_t val)
@@ -136,13 +246,12 @@ void controlLoop(void *parameter)
             float yaw = norm(rx_yaw);
             float throttle = (float)(rx_throttle - 172) / (1811 - 172);
 
-            
             // print values every 100 loops
             static int print_counter = 0;
             if (++print_counter >= 10)
             {
                 print_counter = 0;
-                //Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
+                // Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
                 Serial.print("Throttle:");
                 Serial.print(rx_throttle);
                 Serial.print(",");
@@ -161,7 +270,9 @@ void controlLoop(void *parameter)
         }
 
         // === METRICS ===
-        perf.mpu_read_us = mpu_read_us;
+        // perf.mpu_read_us = mpu_read_us;
+        // modified to new sensor readings 
+        perf.mpu_read_us = sensor_read_us;
         perf.loop_time_us = micros() - loop_start;
         loops_in_window++;
 
@@ -175,10 +286,10 @@ void controlLoop(void *parameter)
     }
 }
 
-void setup() 
+void setup()
 {
     Serial.begin(BAUD_RATE); // start serial comm for USB
-    
+
     Serial.println("\n\nInitializing peripherals...\n\n");
 
     setrgb(255, 255, 0);
@@ -199,25 +310,51 @@ void setup()
     }
     Serial.print("OK...");
     */
-    
+
+    Serial.print("Initializing LSM6DSOX sensor...");
+    if (!sox.begin_I2C(0x6A))
+    {
+        Serial.print("FAILED.\n");
+        setrgb(255, 0, 0);
+        while (1)
+        {
+            delay(1);
+        }
+    }
+    Serial.print("OK...");
+
+    Serial.print("Initializing LIS3MDL sensor...");
+    if (!lis3mdl.begin_I2C(0x1C))
+    {
+        Serial.print("FAILED.\n");
+        setrgb(255, 0, 0);
+        while (1)
+        {
+            delay(1);
+        }
+    }
+    Serial.print("OK...");
+
+    // WARN: setup of the barometer is in the controloop because wire is initialized then
+
     // calibrate sensors (assumes device is stationary, optional in the future)
-    //mpu.calibrateAccelGyro();
+    // mpu.calibrateAccelGyro();
     Serial.print("GYRO/ACCEL OK...");
     delay(1000);
-    //mpu.calibrateMag();
+    // mpu.calibrateMag();
     Serial.print("MAG OK.\n");
 
     Wire.setClock(400000);
 
-    //mpu.setMagneticDeclination(0);
-    
+    // mpu.setMagneticDeclination(0);
+
     /*
     Serial.print("SETTING FILTER TO MADGWICK...");
     mpu.selectFilter(QuatFilterSel::MADGWICK);
     Serial.print("OK\n");
     */
 
-    //mpu.setFilterIterations(1);
+    // mpu.setFilterIterations(1);
 
     /*
     Serial.println("Initializing web server...");
@@ -232,27 +369,26 @@ void setup()
     Serial.print("OK.");
     */
 
-    // create mutex 
+    // create mutex
     state_mutex = xSemaphoreCreateMutex();
     if (!state_mutex)
     {
         Serial.println("ERROR: Failed to create mutex");
         setrgb(255, 0, 0);
-        while (true) delay(1);
+        while (true)
+            delay(1);
     }
 
-    // bind control loop task to its own core (Core 0) 
+    // bind control loop task to its own core (Core 0)
     xTaskCreatePinnedToCore(
-        controlLoop,  
+        controlLoop,
         "ControLoop",
-        8192,   // memory size (deterministic and no dynamic allocation so shouldn't matter)
+        8192, // memory size (deterministic and no dynamic allocation so shouldn't matter)
         NULL,
-        3,      // higher priority than logging task
+        3, // higher priority than logging task
         NULL,
-        0
-    );
+        0);
 
-    
     // === TIMER INIT ===
     Serial.print("Initializing timer...");
     motor_init();
@@ -271,7 +407,7 @@ void setup()
 // ===== CORE 1 =====
 // the work done on this core will be dedicated to logging and grabbing data from our monocopter
 // ==================
-void loop() 
+void loop()
 {
     /*
     static uint32_t last_print_time = 0;
@@ -304,7 +440,7 @@ void loop()
             xSemaphoreGive(state_mutex);
         }
     }
-    
+
 
     static uint32_t lastPrint = 0;
     if (millis() - lastPrint >= 50) { // ~20 Hz print rate

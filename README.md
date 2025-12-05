@@ -1,5 +1,47 @@
 # fan-drone-software
 
+# dec 4 notes carl 
+Today I updated the main.cpp code to use the three new sensors instead of the mpu9250 imu. 
+
+these three sensors are: 
+
+A/G address (LSM6DSOX) : 0x6A <br>
+Baro address (MS5607-02BA) : 0x76 <br>
+Mag address (LIS3MDL) : 0x1C
+
+
+These sensors require the following libraries: 
+
+```
+	arduino-libraries/Arduino_LSM6DSOX@^1.1.2
+	abishur/MS5x@^1.0.0
+	adafruit/Adafruit LIS3MDL@^1.2.5
+```
+
+Add these to the ```lib_deps``` variable to your ```platformio.ini``` (They should already be added.)
+
+
+I made changes to the main.cpp, mainly in the control loop and the variable definition area. 
+
+I created 3 variables: 
+
+```
+MS5x barometer(&Wire);
+Adafruit_LIS3MDL lis3mdl;
+Adafruit_LSM6DSOX sox;
+```
+
+and updated the initialization and the calculations. I also made comments and notes in the ```main.cpp``` file. 
+
+See examples for the three sensor libraries: 
+
+```
+barometer ms5607 = https://github.com/abishur/ms5x/blob/main/examples/AdvancedMS5x/AdvancedMS5x.ino
+
+lis3mdl = https://github.com/adafruit/Adafruit_LIS3MDL/blob/master/examples/lis3mdl_demo/lis3mdl_demo.ino
+
+lsm6sox = https://github.com/adafruit/Adafruit_LSM6DS/blob/master/examples/adafruit_lsm6dsox_test/adafruit_lsm6dsox_test.ino
+```
 
 ## how to set up the software
 
