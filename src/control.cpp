@@ -6,11 +6,6 @@
 
 static bool armed = false;
 
-enum FlightMode {
-    RATE_MODE, // direct rate control
-    ANGLE_MODE // self leveling
-};
-
 void setup_pwm_timer()
 {
     ledc_timer_config_t timer {
@@ -72,21 +67,20 @@ static int map_crsf(int value, int in_min, int in_max, int out_min, int out_max)
     return (value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
-void motor_arm(bool arm)
+int motor_arm()
 {
-    armed = arm;
-    if (!armed) {
+    if (crsf_get_channel(5) < 1800) {
         // kill outputs
         for (int i = 0; i < 5; i++) write_us(i, SERVO_MIN_US);
-        ESP_LOGW(TAG, "Motors disarmed");
+        return 0;
     } else {
-        ESP_LOGI(TAG, "Motors armed");
+        return 1;
     }
 }
 
 void motor_update_from_crsf()
 {
-    if (!armed) return;
+    if (!motor_arm()) return;
 
     // get RC inputs from channels
     int16_t rx_throttle = crsf_get_channel(2);
@@ -109,12 +103,12 @@ void motor_update_from_crsf()
 
     // servo mixing
     const int16_t SERVO_RANGE = 300;
-    uint16_t base_us = 1500;
+    uint16_t base_us = SERVO_MIN_US;
 
-    uint16_t servo1_us = base_us + (-pitch - yaw) * SERVO_RANGE;
-    uint16_t servo2_us = base_us + (-roll - yaw) * SERVO_RANGE;
-    uint16_t servo3_us = base_us + (pitch + yaw) * SERVO_RANGE;
-    uint16_t servo4_us = base_us + (roll + yaw) * SERVO_RANGE;
+    uint16_t servo1_us = base_us + (pitch + yaw) * SERVO_RANGE;
+    uint16_t servo2_us = base_us + (roll + yaw) * SERVO_RANGE;
+    uint16_t servo3_us = base_us + (-pitch + yaw) * SERVO_RANGE;
+    uint16_t servo4_us = base_us + (-roll + yaw) * SERVO_RANGE;
 
     // write to outputs
     write_us(EDF_CHANNEL, throttle_us);

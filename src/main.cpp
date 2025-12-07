@@ -8,7 +8,16 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
-#include <MPU9250.h>
+
+// sensor libraries
+#include "Adafruit_LSM6DSOX.h"
+#include <Adafruit_LIS3MDL.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_AHRS.h>
+#include <MS5x.h>
+
+// sensor fusion algorithm
+Adafruit_Madgwick mad_filter;
 
 bool armed;
 
@@ -18,8 +27,10 @@ CF cf(ALPHA);
 int channels[] = {EDF_CHANNEL, SERVO1_CHANNEL, SERVO2_CHANNEL, SERVO3_CHANNEL, SERVO4_CHANNEL};
 int pins[] = {EDF_PIN, SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN};
 
-// library MPU9250 object
-MPU9250 mpu;
+// sensor objects
+MS5x barometer(&Wire);
+Adafruit_LIS3MDL lis3;
+Adafruit_LSM6DSOX sox;
 
 // mutex for thread-safe access to our flight state
 SemaphoreHandle_t state_mutex;
@@ -59,45 +70,101 @@ void controlLoop(void *parameter)
     const TickType_t period = pdMS_TO_TICKS(1000 / RATE_LOOP_HZ);
     TickType_t prev_wake = xTaskGetTickCount();
 
-    // performance tracking
-    uint32_t loops_in_window = 0;
-    uint32_t stats_window_start = millis();
-
     // local containers to avoid repeated allocations/locks
     float lgx, lgy, lgz;
     float lax, lay, laz;
     float lmx, lmy, lmz;
 
+    // performance tracking
+    uint32_t loops_in_window = 0;
+    uint32_t stats_window_start = millis();
+
     Serial.println("[ControlLoop] Task started on Core 0");
+
+    Serial.print("Initializing MS5607-02BA sensor...");
+    if (barometer.connect() > 0)
+    {
+        Serial.print("FAILED.\n");
+        setrgb(255, 0, 0);
+        while (true) delay(1);
+    }
+    Serial.print("OK.\n");
+
+    // define sensor variables
+    sensors_event_t accel, gyro, temp, mag;
+
+    // barometer data
+    float current_pressure = 0.0f;
+    float current_temperature = 0.0f;
+    double seaLevelPressure = 0.0;
+
+    if (motor_arm())
+    {
+        Serial.print("\n!!!MOTORS ARMED...FLIP MOTOR SWITCH!!!\n");
+        setrgb(255, 0, 0);
+        while (true) delay(1);
+    }
 
     // ==== BEGIN CONTROL LOOP ====
     while (true)
     {
+        bool ready = true;
+
         uint32_t loop_start = micros();
 
         // === GRAB SENSOR DATA ===
         uint32_t t0 = micros();
-        bool ok = mpu.update();
-        uint32_t mpu_read_us = micros() - t0;
-
-        if (ok)
+        
+        // getting events (data) from sensors
+        if (!sox.getEvent(&accel, &gyro, &temp))
         {
-            lgx = mpu.getGyroX() - GX_BIAS;
-            lgy = mpu.getGyroY() - GY_BIAS;
-            lgz = mpu.getGyroZ() - GZ_BIAS;
-            lax = mpu.getAccX();
-            lay = mpu.getAccY();
-            laz = mpu.getAccZ();
+            Serial.println("\n*** Failed to get SOX event ***\n");
+            ready = false;
+            continue;
+        }
+        if (!lis3.getEvent(&mag)) 
+        {
+            Serial.println("\n*** Failed to get LIS3 event ***\n");
+            ready = false;
+            continue;
+        }
 
-            lmx = mpu.getMagX();
-            lmy = mpu.getMagY();
-            lmz = mpu.getMagZ();
+        barometer.checkUpdates();
+        if (barometer.isReady())
+        {
+            current_temperature = barometer.GetTemp();
+            current_pressure = barometer.GetPres();
 
-            cf.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz, 1.0f / RATE_LOOP_HZ);
+            // from gemini:
+            // If we needed altitude (e.g., for altitude hold), we'd calculate it here:
+            // if (seaLevelPressure == 0) seaLevelPressure = barometer.getSeaLevel(current_temperature);
+            // float altitude = barometer.getAltitude(true); // true = with temperature correction
+        }
+        uint32_t imu_read_us = micros() - t0;
+        // ========================
 
-            float roll = cf.getRoll();
-            float pitch = cf.getPitch();
-            float yaw = cf.getYaw();
+        if (ready)
+        {
+            // rad/s
+            lgx = gyro.gyro.x;
+            lgy = gyro.gyro.y;
+            lgz = gyro.gyro.z;
+
+            // m/s^2
+            lax = accel.acceleration.x;
+            lay = accel.acceleration.y;
+            laz = accel.acceleration.z;
+
+            // uTesla
+            lmx = mag.magnetic.x;
+            lmy = mag.magnetic.y;
+            lmz = mag.magnetic.z;
+
+            mad_filter.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz);
+
+            float roll = mad_filter.getRoll();
+            float pitch = mad_filter.getPitch();
+            float yaw = mad_filter.getYaw();  
 
             if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(2)) == pdTRUE)
             {
@@ -161,7 +228,7 @@ void controlLoop(void *parameter)
         }
 
         // === METRICS ===
-        perf.mpu_read_us = mpu_read_us;
+        perf.mpu_read_us = imu_read_us;
         perf.loop_time_us = micros() - loop_start;
         loops_in_window++;
 
@@ -186,38 +253,25 @@ void setup()
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
 
-    Serial.print("Initializing MPU9250 sensor...");
-    /*initialize MPU9250
-    if (!mpu.setup(0x68))
+    Serial.print("Initializing LSM6DSOX sensor...");
+    if (!sox.begin_I2C(0x6A))
     {
         Serial.print("FAILED.\n");
         setrgb(255, 0, 0);
-        while(1)
-        {
-            delay(1);
-        }
+        while (true) delay(1);
     }
-    Serial.print("OK...");
-    */
-    
-    // calibrate sensors (assumes device is stationary, optional in the future)
-    //mpu.calibrateAccelGyro();
-    Serial.print("GYRO/ACCEL OK...");
-    delay(1000);
-    //mpu.calibrateMag();
-    Serial.print("MAG OK.\n");
+    Serial.print("OK.\n");
+
+    Serial.print("Initializing LIS3MDL sensor...");
+    if (!lis3.begin_I2C(0x1C))
+    {
+        Serial.print("FAILED.\n");
+        setrgb(255, 0, 0);
+        while (true) delay(1);
+    }
+    Serial.print("OK.\n");
 
     Wire.setClock(400000);
-
-    //mpu.setMagneticDeclination(0);
-    
-    /*
-    Serial.print("SETTING FILTER TO MADGWICK...");
-    mpu.selectFilter(QuatFilterSel::MADGWICK);
-    Serial.print("OK\n");
-    */
-
-    //mpu.setFilterIterations(1);
 
     /*
     Serial.println("Initializing web server...");
@@ -262,14 +316,17 @@ void setup()
     crsf_init();
     Serial.print("OK.\n");
 
-    motor_arm(true);
+    // initialize madgwick filter
+    mad_filter.begin(RATE_LOOP_HZ);
+
+    motor_arm();
     armed = true;
 
     setrgb(0, 255, 0);
 }
 
 // ===== CORE 1 =====
-// the work done on this core will be dedicated to logging and grabbing data from our monocopter
+// the work done on this core will be dedicated to logging and grabbing data from our monocopter.
 // ==================
 void loop() 
 {
