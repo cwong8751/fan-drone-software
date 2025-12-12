@@ -6,22 +6,25 @@
 #define FAILURE -1
 
 // ===== HARDWARE PINS =====
-// --- MPU9250 ---
-#define SDA_PIN 8
-#define SCL_PIN 9
+// --- LSM6DSOX ---
+#define SDA_IMU_PIN 8
+#define SCL_IMU_PIN 9
+// --- LIS3MDL) ---
+#define SDA_MAG_PIN 12
+#define SCL_MAG_PIN 11
 // --- EDF ---
 #define EDF_PIN 14
 // --- SERVOS ---
-#define SERVO1_PIN 10
-#define SERVO2_PIN 11
-#define SERVO3_PIN 12
-#define SERVO4_PIN 13
+#define SERVO1_PIN 15
+#define SERVO2_PIN 7
+#define SERVO3_PIN 6
+#define SERVO4_PIN 5
 // --- RECEIVER ---
 // - CRSF -
-#define CRSF_TX_PIN 17
-#define CRSF_RX_PIN 18
+#define CRSF_TX_PIN 43
+#define CRSF_RX_PIN 44
 // --- OTHER ---
-#define RGB_PIN 48
+#define RGB_PIN 38
 
 // ==== CHANNELS ====
 #define EDF_CHANNEL 0

@@ -1,3 +1,4 @@
+/*
 #include "pid.h"
 #include "config.h"
 
@@ -77,3 +78,4 @@ AttitudeCommand compute_cascaded_pid(float rc_roll, float rc_pitch, float rc_yaw
 
     return cmd;
 }
+*/

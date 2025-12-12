@@ -250,11 +250,12 @@ void setup()
 
     setrgb(255, 255, 0);
 
-    Wire.begin(SDA_PIN, SCL_PIN);
+    Wire.begin(SDA_IMU_PIN, SCL_IMU_PIN);
+    Wire.begin(SDA_MAG_PIN, SCL_MAG_PIN);
     Wire.setClock(400000);
 
     Serial.print("Initializing LSM6DSOX sensor...");
-    if (!sox.begin_I2C(0x6A))
+    if (!sox.begin_I2C(0x6B))
     {
         Serial.print("FAILED.\n");
         setrgb(255, 0, 0);
