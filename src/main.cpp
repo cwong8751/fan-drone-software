@@ -31,6 +31,7 @@ int pins[] = {EDF_PIN, SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN};
 MS5x barometer(&Wire);
 Adafruit_LIS3MDL lis3;
 Adafruit_LSM6DSOX sox;
+extern TwoWire Wire1; // Bus number 1 for the second I2C peripheral
 
 // mutex for thread-safe access to our flight state
 SemaphoreHandle_t state_mutex;
@@ -246,13 +247,16 @@ void setup()
 {
     Serial.begin(BAUD_RATE); // start serial comm for USB
     
+    delay(3000);
     Serial.println("\n\nInitializing peripherals...\n\n");
 
     setrgb(255, 255, 0);
 
-    Wire.begin(SDA_IMU_PIN, SCL_IMU_PIN);
-    Wire.begin(SDA_MAG_PIN, SCL_MAG_PIN);
-    Wire.setClock(400000);
+    
+    Wire.setPins(SDA_IMU_PIN, SCL_IMU_PIN);
+    Wire.begin();
+    Wire1.setPins(SDA_MAG_PIN, SCL_MAG_PIN);
+    Wire1.begin();
 
     Serial.print("Initializing LSM6DSOX sensor...");
     if (!sox.begin_I2C(0x6B))
@@ -264,7 +268,7 @@ void setup()
     Serial.print("OK.\n");
 
     Serial.print("Initializing LIS3MDL sensor...");
-    if (!lis3.begin_I2C(0x1C))
+    if (!lis3.begin_I2C(0x1C, &Wire1))
     {
         Serial.print("FAILED.\n");
         setrgb(255, 0, 0);
