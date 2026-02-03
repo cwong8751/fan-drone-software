@@ -186,7 +186,7 @@ void controlLoop(void *parameter)
         // === CONTROL ===
         crsf_update();
         
-        if (armed)
+        if (motor_arm())
         {
             // read transmitter input
             int16_t rx_throttle = crsf_get_channel(2); // 3->2 
@@ -259,7 +259,7 @@ void setup()
     Wire1.begin();
 
     Serial.print("Initializing LSM6DSOX sensor...");
-    if (!sox.begin_I2C(0x6B))
+    if (!sox.begin_I2C(0x6B, &Wire))
     {
         Serial.print("FAILED.\n");
         setrgb(255, 0, 0);

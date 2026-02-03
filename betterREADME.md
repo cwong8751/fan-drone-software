@@ -1009,29 +1009,12 @@ void setServoMicroseconds(uint8_t channel, uint16_t microseconds)
 - Verify magnetometer calibration
 - Adjust Madgwick filter parameters
 
-**Problem**: Oscillations or unstable flight
-- **Solution**: Reduce PID gains, especially Kp and Kd
-- Check for mechanical vibrations affecting sensors
-- Verify control surface directions
-- Ensure CG (center of gravity) is correct
-
 **Problem**: No CRSF receiver data
 - **Solution**: Check UART connections
 - Verify receiver is bound and powered
 - Confirm baud rate matches receiver (typically 416666)
 - Check for correct TX/RX pin assignment
 
-**Problem**: Erratic sensor readings
-- **Solution**: Check I2C pull-up resistors (typically 4.7kΩ)
-- Verify power supply stability (sensors need clean 3.3V)
-- Check for electromagnetic interference from motors
-
-**Problem**: System freezes or watchdog resets
-- **Solution**: Monitor loop timing with performance metrics
-- Check for blocking operations in control loop
-- Verify adequate stack size for tasks
-
----
 
 ## Future Enhancements
 
@@ -1227,30 +1210,14 @@ float cf_get_angle(CF *filter);
 4. Push to branch (`git push origin feature/new-feature`)
 5. Open a Pull Request
 
-## License
-
-[Specify your license here]
-
 ## Authors
 
-[Your name/team]
-
-## Acknowledgments
-
-- Adafruit for sensor libraries
-- TBS/ExpressLRS for CRSF protocol
-- Sebastian Madgwick for AHRS algorithm
-- FreeRTOS team
-- Espressif ESP32 community
-
----
+Richard Meyer | meyer.r.l@wustl.edu
 
 ## Revision History
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2026-01-31 | Initial comprehensive documentation |
 
----
 
 **End of Documentation**
