@@ -19,8 +19,6 @@
 // sensor fusion algorithm
 Adafruit_Madgwick mad_filter;
 
-bool armed;
-
 Performance perf;
 FlightState state;
 CF cf(ALPHA);
@@ -64,7 +62,38 @@ void setServoMicroseconds(uint8_t channel, uint16_t microseconds)
 // ==================
 void controlLoop(void *parameter)
 {
-    Wire.begin(SDA, SCL, 400000);
+    Serial.println("[ControlLoop] Task started on Core 0\n");
+
+    Serial.println("\n\nInitializing peripherals...\n\n");
+
+    setrgb(255, 255, 0);
+    
+    Wire.setPins(SDA_IMU_PIN, SCL_IMU_PIN);
+    Wire.begin();
+    Wire1.setPins(SDA_MAG_PIN, SCL_MAG_PIN);
+    Wire1.begin();
+
+    delay(1000); // give time for I2C buses to stabilize
+
+    Wire.setClock(400000);
+
+    Serial.print("Initializing LSM6DSOX sensor...");
+    if (!sox.begin_I2C(0x6B))
+    {
+        Serial.print("FAILED.\n");
+        setrgb(255, 0, 0);
+        while (true) delay(1);
+    }
+    Serial.print("OK.\n");
+
+    Serial.print("Initializing LIS3MDL sensor...");
+    if (!lis3.begin_I2C(0x1C, &Wire1))
+    {
+        Serial.print("FAILED.\n");
+        setrgb(255, 0, 0);
+        while (true) delay(1);
+    }
+    Serial.print("OK.\n");
 
     const uint32_t rate_period_us = 1000000 / RATE_LOOP_HZ;
 
@@ -79,8 +108,6 @@ void controlLoop(void *parameter)
     // performance tracking
     uint32_t loops_in_window = 0;
     uint32_t stats_window_start = millis();
-
-    Serial.println("[ControlLoop] Task started on Core 0");
 
     Serial.print("Initializing MS5607-02BA sensor...");
     if (barometer.connect() > 0)
@@ -99,12 +126,14 @@ void controlLoop(void *parameter)
     float current_temperature = 0.0f;
     double seaLevelPressure = 0.0;
 
-    if (motor_arm())
+    while (motor_arm())
     {
         Serial.print("\n!!!MOTORS ARMED...FLIP MOTOR SWITCH!!!\n");
         setrgb(255, 0, 0);
-        while (true) delay(1);
+        delay(1);
     }
+
+    setrgb(0, 255, 0);
 
     // ==== BEGIN CONTROL LOOP ====
     while (true)
@@ -247,36 +276,7 @@ void setup()
 {
     Serial.begin(BAUD_RATE); // start serial comm for USB
     
-    delay(3000);
-    Serial.println("\n\nInitializing peripherals...\n\n");
-
-    setrgb(255, 255, 0);
-
-    
-    Wire.setPins(SDA_IMU_PIN, SCL_IMU_PIN);
-    Wire.begin();
-    Wire1.setPins(SDA_MAG_PIN, SCL_MAG_PIN);
-    Wire1.begin();
-
-    Serial.print("Initializing LSM6DSOX sensor...");
-    if (!sox.begin_I2C(0x6B, &Wire))
-    {
-        Serial.print("FAILED.\n");
-        setrgb(255, 0, 0);
-        while (true) delay(1);
-    }
-    Serial.print("OK.\n");
-
-    Serial.print("Initializing LIS3MDL sensor...");
-    if (!lis3.begin_I2C(0x1C, &Wire1))
-    {
-        Serial.print("FAILED.\n");
-        setrgb(255, 0, 0);
-        while (true) delay(1);
-    }
-    Serial.print("OK.\n");
-
-    Wire.setClock(400000);
+    delay(3000); 
 
     /*
     Serial.println("Initializing web server...");
@@ -290,8 +290,22 @@ void setup()
     }
     Serial.print("OK.");
     */
+    
+    // (prev task init moved from here)
 
-    // create mutex 
+    // === TIMER INIT ===
+    Serial.print("Initializing timer...");
+    motor_init();
+    Serial.print("OK.\n");
+
+    Serial.print("Initializing UART CRSF receiver...");
+    crsf_init();
+    Serial.print("OK.\n");
+
+    // initialize madgwick filter
+    mad_filter.begin(RATE_LOOP_HZ);
+
+    // create mutex for state data
     state_mutex = xSemaphoreCreateMutex();
     if (!state_mutex)
     {
@@ -310,24 +324,6 @@ void setup()
         NULL,
         0
     );
-
-    
-    // === TIMER INIT ===
-    Serial.print("Initializing timer...");
-    motor_init();
-    Serial.print("OK.\n");
-
-    Serial.print("Initializing UART CRSF receiver...");
-    crsf_init();
-    Serial.print("OK.\n");
-
-    // initialize madgwick filter
-    mad_filter.begin(RATE_LOOP_HZ);
-
-    motor_arm();
-    armed = true;
-
-    setrgb(0, 255, 0);
 }
 
 // ===== CORE 1 =====
