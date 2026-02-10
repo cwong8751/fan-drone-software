@@ -56,7 +56,9 @@ void write_us(uint8_t channel, uint16_t usec)
     const uint32_t period_us = 1000000 / PWM_FREQ;
     uint32_t duty = (usec * max_duty) / period_us;
     
-    Serial.printf("Ch%d: %uus -> duty %lu\n", channel, usec, duty);
+    //Serial.printf("Ch%d: %uus -> duty %lu\n", channel, usec, duty);
+
+    //delay(1000);
     
     ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)channel, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)channel);
@@ -69,6 +71,10 @@ static int map_crsf(int value, int in_min, int in_max, int out_min, int out_max)
 
 int motor_arm()
 {
+    crsf_update();
+    // Serial.printf("%d, %d, %d, %d, %d, %d", 
+    //     crsf_get_channel(0), crsf_get_channel(1), crsf_get_channel(2), 
+    //     crsf_get_channel(3), crsf_get_channel(4), crsf_get_channel(5));
     if (crsf_get_channel(5) < 1800) {
         // kill outputs
         for (int i = 0; i < 5; i++) write_us(i, SERVO_MIN_US);

@@ -1,4 +1,3 @@
-
 #include "cf.h"
 #include "metric.h"
 #include "config.h"
@@ -13,70 +12,95 @@
 #include "Adafruit_LSM6DSOX.h"
 #include <Adafruit_LIS3MDL.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_AHRS.h>
 #include <MS5x.h>
+#include "lsm6dsox_ll.h"
 
-// sensor fusion algorithm
+// ===== OPTION 1: Use Adafruit library (RECOMMENDED) =====
+#include <Adafruit_AHRS.h>
 Adafruit_Madgwick mad_filter;
 
+// ===== OPTION 2: Use custom implementation =====
+#include "madgwick_filter.h"
+// MadgwickFilter mad_filter(450, 0.25f);
+
+#include "sensor_config.h"  // Axis remapping utilities
+#include "sensor_calibration.h"
+
+SensorCalibrator calibrator;
 Performance perf;
 FlightState state;
 CF cf(ALPHA);
 int channels[] = {EDF_CHANNEL, SERVO1_CHANNEL, SERVO2_CHANNEL, SERVO3_CHANNEL, SERVO4_CHANNEL};
 int pins[] = {EDF_PIN, SERVO1_PIN, SERVO2_PIN, SERVO3_PIN, SERVO4_PIN};
+constexpr float DEG2RAD = 0.01745329252f;
+constexpr float GYRO_SCALE =
+    (500.0f / 32768.0f) * DEG2RAD;
+constexpr float ACC_SCALE  = 8.0f / 32768.0f;
 
 // sensor objects
 MS5x barometer(&Wire);
 Adafruit_LIS3MDL lis3;
 Adafruit_LSM6DSOX sox;
-extern TwoWire Wire1; // Bus number 1 for the second I2C peripheral
+extern TwoWire Wire1;
+IMURaw imu;
 
-// mutex for thread-safe access to our flight state
 SemaphoreHandle_t state_mutex;
 
-// helper function for LEDs indicating FC status
+inline int16_t gyro_dps_q15(int16_t raw) {
+    return (raw * GYRO_SCALE_Q15) >> 15;
+}
+
 void setrgb(uint8_t red, uint8_t green, uint8_t blue)
 {
   neopixelWrite(RGB_PIN, red, green, blue);
 }
 
-// helper function to convert microseconds to duty cycle for PWM
 uint32_t servoMicrosecondsToDuty(uint16_t microseconds)
 {
     const uint32_t max_duty = (1 << PWM_RES_BITS) - 1;
-    return (microseconds * max_duty) / 20000; // 20ms period
+    return (microseconds * max_duty) / 20000;
 }
 
-// helper function to set servo position in microseconds
 void setServoMicroseconds(uint8_t channel, uint16_t microseconds)
 {
     if (microseconds < 1000) microseconds = 1000;
     if (microseconds > 2000) microseconds = 2000;
-
     uint32_t duty = servoMicrosecondsToDuty(microseconds);
     ledcWrite(channel, duty);
 }
 
-// ===== CORE 0 =====
-// the work done on this core will be dedicated to processing the control loop of our monocopter.
-// ==================
-void controlLoop(void *parameter)
+const uint32_t rate_period_us = 1000000 / RATE_LOOP_HZ;
+const TickType_t period = pdMS_TO_TICKS(1000 / RATE_LOOP_HZ);
+TickType_t prev_wake = xTaskGetTickCount();
+
+float lgx, lgy, lgz;
+float lax, lay, laz;
+float lmx, lmy, lmz;
+
+uint32_t loops_in_window = 0;
+uint32_t stats_window_start = 0;
+
+sensors_event_t accel, gyro, temp, mag;
+
+float current_pressure = 0.0f;
+float current_temperature = 0.0f;
+double seaLevelPressure = 0.0;
+
+void setup() 
 {
-    Serial.println("[ControlLoop] Task started on Core 0\n");
-
+    Serial.begin(BAUD_RATE);
+    delay(3000); 
     Serial.println("\n\nInitializing peripherals...\n\n");
-
     setrgb(255, 255, 0);
     
     Wire.setPins(SDA_IMU_PIN, SCL_IMU_PIN);
     Wire.begin();
     Wire1.setPins(SDA_MAG_PIN, SCL_MAG_PIN);
     Wire1.begin();
-
-    delay(1000); // give time for I2C buses to stabilize
-
+    delay(3000);
     Wire.setClock(400000);
 
+    // ===== LSM6DSOX INIT =====
     Serial.print("Initializing LSM6DSOX sensor...");
     if (!sox.begin_I2C(0x6B))
     {
@@ -85,7 +109,19 @@ void controlLoop(void *parameter)
         while (true) delay(1);
     }
     Serial.print("OK.\n");
+    
+    // ===== CONFIGURE LSM6DSOX (CRITICAL!) =====
+    sox.setAccelRange(LSM6DS_ACCEL_RANGE_4_G);
+    sox.setGyroRange(LSM6DS_GYRO_RANGE_500_DPS);
+    sox.setAccelDataRate(LSM6DS_RATE_833_HZ);
+    sox.setGyroDataRate(LSM6DS_RATE_833_HZ);
+    
+    Serial.printf("  Accel: ±4G @ 104Hz\n");
+    Serial.printf("  Gyro: ±500dps @ 104Hz\n");
+    
+    delay(3000);
 
+    // ===== LIS3MDL INIT =====
     Serial.print("Initializing LIS3MDL sensor...");
     if (!lis3.begin_I2C(0x1C, &Wire1))
     {
@@ -94,206 +130,56 @@ void controlLoop(void *parameter)
         while (true) delay(1);
     }
     Serial.print("OK.\n");
-
-    const uint32_t rate_period_us = 1000000 / RATE_LOOP_HZ;
-
-    const TickType_t period = pdMS_TO_TICKS(1000 / RATE_LOOP_HZ);
-    TickType_t prev_wake = xTaskGetTickCount();
-
-    // local containers to avoid repeated allocations/locks
-    float lgx, lgy, lgz;
-    float lax, lay, laz;
-    float lmx, lmy, lmz;
-
-    // performance tracking
-    uint32_t loops_in_window = 0;
-    uint32_t stats_window_start = millis();
-
-    Serial.print("Initializing MS5607-02BA sensor...");
-    if (barometer.connect() > 0)
-    {
-        Serial.print("FAILED.\n");
-        setrgb(255, 0, 0);
-        while (true) delay(1);
-    }
-    Serial.print("OK.\n");
-
-    // define sensor variables
-    sensors_event_t accel, gyro, temp, mag;
-
-    // barometer data
-    float current_pressure = 0.0f;
-    float current_temperature = 0.0f;
-    double seaLevelPressure = 0.0;
-
-    while (motor_arm())
-    {
-        Serial.print("\n!!!MOTORS ARMED...FLIP MOTOR SWITCH!!!\n");
-        setrgb(255, 0, 0);
-        delay(1);
-    }
+    
+    // ===== CONFIGURE LIS3MDL =====
+    lis3.setRange(LIS3MDL_RANGE_4_GAUSS);
+    lis3.setDataRate(LIS3MDL_DATARATE_155_HZ);
+    lis3.setPerformanceMode(LIS3MDL_MEDIUMMODE);
+    lis3.setOperationMode(LIS3MDL_CONTINUOUSMODE);
+    
+    Serial.printf("  Mag: ±4 Gauss @ 155Hz\n");
 
     setrgb(0, 255, 0);
 
-    // ==== BEGIN CONTROL LOOP ====
-    while (true)
-    {
-        bool ready = true;
-
-        uint32_t loop_start = micros();
-
-        // === GRAB SENSOR DATA ===
-        uint32_t t0 = micros();
-        
-        // getting events (data) from sensors
-        if (!sox.getEvent(&accel, &gyro, &temp))
-        {
-            Serial.println("\n*** Failed to get SOX event ***\n");
-            ready = false;
-            continue;
-        }
-        if (!lis3.getEvent(&mag)) 
-        {
-            Serial.println("\n*** Failed to get LIS3 event ***\n");
-            ready = false;
-            continue;
-        }
-
-        barometer.checkUpdates();
-        if (barometer.isReady())
-        {
-            current_temperature = barometer.GetTemp();
-            current_pressure = barometer.GetPres();
-
-            // from gemini:
-            // If we needed altitude (e.g., for altitude hold), we'd calculate it here:
-            // if (seaLevelPressure == 0) seaLevelPressure = barometer.getSeaLevel(current_temperature);
-            // float altitude = barometer.getAltitude(true); // true = with temperature correction
-        }
-        uint32_t imu_read_us = micros() - t0;
-        // ========================
-
-        if (ready)
-        {
-            // rad/s
-            lgx = gyro.gyro.x;
-            lgy = gyro.gyro.y;
-            lgz = gyro.gyro.z;
-
-            // m/s^2
-            lax = accel.acceleration.x;
-            lay = accel.acceleration.y;
-            laz = accel.acceleration.z;
-
-            // uTesla
-            lmx = mag.magnetic.x;
-            lmy = mag.magnetic.y;
-            lmz = mag.magnetic.z;
-
-            mad_filter.update(lgx, lgy, lgz, lax, lay, laz, lmx, lmy, lmz);
-
-            float roll = mad_filter.getRoll();
-            float pitch = mad_filter.getPitch();
-            float yaw = mad_filter.getYaw();  
-
-            if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(2)) == pdTRUE)
-            {
-                state.roll = roll;
-                state.pitch = pitch;
-                state.yaw = yaw;
-
-                state.gyro_x = lgx;
-                state.gyro_y = lgy;
-                state.gyro_z = lgz;
-
-                state.timestamp_ms = millis();
-                state.data_ready = true;
-                xSemaphoreGive(state_mutex);
-            }
-        }
-
-        // === CONTROL ===
-        crsf_update();
-        
-        if (motor_arm())
-        {
-            // read transmitter input
-            int16_t rx_throttle = crsf_get_channel(2); // 3->2 
-            int16_t rx_roll = crsf_get_channel(0); // 1->3
-            int16_t rx_pitch = crsf_get_channel(1); // 2->1
-            int16_t rx_yaw = crsf_get_channel(3); // 4->3
-
-            // normalize digital values
-            auto norm = [](int16_t val)
-            {
-                return (float)(val - 992) / 820.0f; // center at midpoint (992? for 172-1811)
-            };
-            float roll = norm(rx_roll);
-            float pitch = norm(rx_pitch);
-            float yaw = norm(rx_yaw);
-            float throttle = (float)(rx_throttle - 172) / (1811 - 172);
-
-            
-            // print values every 100 loops
-            static int print_counter = 0;
-            if (++print_counter >= 10)
-            {
-                print_counter = 0;
-                //Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", rx_throttle, rx_roll, rx_pitch, rx_yaw);
-                Serial.print("Throttle:");
-                Serial.print(rx_throttle);
-                Serial.print(",");
-                Serial.print("Roll:");
-                Serial.print(rx_roll);
-                Serial.print(",");
-                Serial.print("Pitch:");
-                Serial.print(rx_pitch);
-                Serial.print(",");
-                Serial.print("Yaw:");
-                Serial.println(rx_yaw);
-            }
-
-            // update motor outputs
-            motor_update_from_crsf();
-        }
-
-        // === METRICS ===
-        perf.mpu_read_us = imu_read_us;
-        perf.loop_time_us = micros() - loop_start;
-        loops_in_window++;
-
-        if (millis() - stats_window_start >= 1000)
-        {
-            perf.loop_count = loops_in_window;
-            perf.free_heap = ESP.getFreeHeap();
-            loops_in_window = 0;
-            stats_window_start = millis();
+    // ===== PERFORM CALIBRATIONS =====
+    Serial.println("\n=== SENSOR CALIBRATION ===");
+    
+    // Gyro calibration (REQUIRED - FC must be still)
+    if (!calibrator.calibrateGyro(sox, 500)) {
+        Serial.println("Gyro calibration FAILED!");
+        setrgb(255, 0, 0);
+        while(1) delay(1);
+    }
+    
+    // Magnetometer calibration
+    Serial.println("\nChoose mag calibration method:");
+    Serial.println("  [Press any key for ADVANCED calibration]");
+    Serial.println("  [Or wait 5 sec for SIMPLE calibration]");
+    
+    unsigned long wait_start = millis();
+    bool do_advanced = false;
+    while (millis() - wait_start < 5000) {
+        if (Serial.available()) {
+            Serial.read();
+            do_advanced = true;
+            break;
         }
     }
-}
-
-void setup() 
-{
-    Serial.begin(BAUD_RATE); // start serial comm for USB
     
-    delay(3000); 
-
-    /*
-    Serial.println("Initializing web server...");
-    if(initServer() < 0)
-    {
-        Serial.print("FAILED.");
-        while (true)
-        {
-            delay(1);
+    if (do_advanced) {
+        if (!calibrator.calibrateMagAdvanced(lis3, 30)) {
+            Serial.println("WARNING: Mag calibration failed!");
+        }
+    } else {
+        if (!calibrator.calibrateMagSimple(lis3, 500)) {
+            Serial.println("WARNING: Mag calibration failed!");
         }
     }
-    Serial.print("OK.");
-    */
     
-    // (prev task init moved from here)
+    Serial.println("\n=== CALIBRATION COMPLETE ===\n");
 
-    // === TIMER INIT ===
+    setrgb(0, 255, 0);
+    
     Serial.print("Initializing timer...");
     motor_init();
     Serial.print("OK.\n");
@@ -302,85 +188,143 @@ void setup()
     crsf_init();
     Serial.print("OK.\n");
 
-    // initialize madgwick filter
-    mad_filter.begin(RATE_LOOP_HZ);
+    // ===== INITIALIZE MADGWICK FILTER =====
+    // OPTION 1 (Adafruit):
+    mad_filter.begin(450);
 
-    // create mutex for state data
-    state_mutex = xSemaphoreCreateMutex();
-    if (!state_mutex)
-    {
-        Serial.println("ERROR: Failed to create mutex");
-        setrgb(255, 0, 0);
-        while (true) delay(1);
-    }
-
-    // bind control loop task to its own core (Core 0) 
-    xTaskCreatePinnedToCore(
-        controlLoop,  
-        "ControLoop",
-        8192,   // memory size (deterministic and no dynamic allocation so shouldn't matter)
-        NULL,
-        3,      // higher priority than logging task
-        NULL,
-        0
-    );
+    mad_filter.setBeta(0.25f);
+    
+    // OPTION 2 (Custom): already initialized in declaration
+    
+    Serial.println("\n=== Flight Controller Ready ===\n");
 }
 
-// ===== CORE 1 =====
-// the work done on this core will be dedicated to logging and grabbing data from our monocopter.
-// ==================
 void loop() 
 {
-    /*
-    static uint32_t last_print_time = 0;
-    static uint32_t last_stats_time = 0;
-    static float last_roll = 0, last_pitch = 0, last_yaw = 0;
-    const float THRESHOLD_DEG = 1.5f;      // degrees change required to trigger print
-    const uint32_t PRINT_INTERVAL_MS = 100; // minimum interval between prints
-    const uint32_t STATS_INTERVAL_MS = 5000; // summary print every 5s
+    bool ready = true;
+    uint32_t loop_start = micros();
 
-    /* Check for significant attitude change
-    if (millis() - last_print_time >= PRINT_INTERVAL_MS)
-    {
-        if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(10)) == pdTRUE)
-        {
-            float d_roll  = fabs(state.roll  - last_roll);
-            float d_pitch = fabs(state.pitch - last_pitch);
-            float d_yaw   = fabs(state.yaw   - last_yaw);
-
-            if (d_roll > THRESHOLD_DEG || d_pitch > THRESHOLD_DEG || d_yaw > THRESHOLD_DEG)
-            {
-                Serial.printf("Δ roll: %.2f°, pitch: %.2f°, yaw: %.2f°  |  RPY: %.2f, %.2f, %.2f\n",
-                              d_roll, d_pitch, d_yaw, state.roll, state.pitch, state.yaw);
-
-                last_roll = state.roll;
-                last_pitch = state.pitch;
-                last_yaw = state.yaw;
-                last_print_time = millis();
-            }
-
-            xSemaphoreGive(state_mutex);
-        }
-    }
+    // === GRAB SENSOR DATA ===
+    uint32_t t0 = micros();
     
+    // if (!sox.getEvent(&accel, &gyro, &temp))
+    // {
+    //     Serial.println("\n*** Failed to get SOX event ***\n");
+    //     ready = false;
+    // }
+    // if (!lis3.getEvent(&mag)) 
+    // {
+    //     Serial.println("\n*** Failed to get LIS3 event ***\n");
+    //     ready = false;
+    // }
 
-    static uint32_t lastPrint = 0;
-    if (millis() - lastPrint >= 50) { // ~20 Hz print rate
-        lastPrint = millis();
+    lsm6_ll_read(imu);
 
-        if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            Serial.printf("Roll:%.2f, Pitch:%.2f, Yaw:%.2f\n", state.roll, state.pitch, state.yaw);
-            xSemaphoreGive(state_mutex);
-        }
-    }
+    // uint32_t imu_read_us = micros() - t0;
 
-    // Print a short summary every few seconds
-    if (millis() - last_stats_time >= STATS_INTERVAL_MS)
+    // Serial.printf("IMU read time: %lu us\n", imu_read_us);
+
+    if (ready)
     {
-        last_stats_time = millis();
-        Serial.printf("[Core1] Loop alive | Heap: %lu bytes | Stack watermark: %lu | Read time: %lu\n", esp_get_free_heap_size(), uxTaskGetStackHighWaterMark(NULL), perf.mpu_read_us);
+        //uint32_t t0 = micros();
+
+        // Get RAW sensor values
+        float gx_raw = imu.gx * GYRO_SCALE;
+        float gy_raw = imu.gy * GYRO_SCALE;
+        float gz_raw = imu.gz * GYRO_SCALE;
+
+        float ax_raw = imu.ax * ACC_SCALE;
+        float ay_raw = imu.ay * ACC_SCALE;
+        float az_raw = imu.az * ACC_SCALE;
+        
+        // float mx_raw = mag.magnetic.x;
+        // float my_raw = mag.magnetic.y;
+        // float mz_raw = mag.magnetic.z;
+
+        calibrator.applyGyroCalibration(gx_raw, gy_raw, gz_raw);
+        //calibrator.applyMagCalibration(mx_raw, my_raw, mz_raw);
+        
+        // ===== APPLY AXIS REMAPPING =====
+        SensorAxes::remapGyro(gx_raw, gy_raw, gz_raw, lgx, lgy, lgz);
+        SensorAxes::remapAccel(ax_raw, ay_raw, az_raw, lax, lay, laz);
+        //SensorAxes::remapMag(mx_raw, my_raw, mz_raw, lmx, lmy, lmz);
+
+        // ===== UPDATE FILTER =====
+        mad_filter.updateIMU(gx_raw, gy_raw, gz_raw, ax_raw, ay_raw, az_raw);
+        // OR for IMU-only: mad_filter.updateIMU(lgx, lgy, lgz, lax, lay, laz);
+
+        float roll = mad_filter.getRoll();
+        float pitch = mad_filter.getPitch();
+        float yaw = mad_filter.getYaw();  
+
+        uint32_t imu_time_us = micros() - t0;
+
+        // Serial.printf("IMU time: %lu us\n", imu_time_us);
+
+        // Serial.printf("\nRoll: %.2f, Pitch: %.2f\n", roll, pitch);
+
+        // Serial.print(roll);
+        // Serial.print(',');
+        // Serial.print(pitch);
+        // Serial.print(',');
+        // Serial.println(yaw);
+
+        static uint32_t last_print = 0;
+        if (millis() - last_print > 100) {
+            last_print = millis();
+            // Serial.printf("Pitch: %.2f Roll: %.2f Yaw: %.2f\n", pitch, roll, yaw);
+        }
+
+        state.roll = roll;
+        state.pitch = pitch;
+        state.yaw = yaw;
+        state.gyro_x = lgx;
+        state.gyro_y = lgy;
+        state.gyro_z = lgz;
+        state.timestamp_ms = millis();
+        state.data_ready = true;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(5)); // don’t hog CPU
-    */
+    // uint32_t t1 = micros();
+
+    // // === CONTROL ===
+    // crsf_update();
+    
+    // uint32_t t2 = micros() - t1;
+
+    // if (motor_arm())
+    // {
+    //     int16_t rx_throttle = crsf_get_channel(2);
+    //     int16_t rx_roll = crsf_get_channel(0);
+    //     int16_t rx_pitch = crsf_get_channel(1);
+    //     int16_t rx_yaw = crsf_get_channel(3);
+
+    //     auto norm = [](int16_t val)
+    //     {
+    //         return (float)(val - 992) / 820.0f;
+    //     };
+    //     float roll = norm(rx_roll);
+    //     float pitch = norm(rx_pitch);
+    //     float yaw = norm(rx_yaw);
+    //     float throttle = (float)(rx_throttle - 172) / (1811 - 172);
+
+    //     static int print_counter = 0;
+    //     if (++print_counter >= 10)
+    //     {
+    //         print_counter = 0;
+    //         // Serial.printf("[RX] Thr:%d  Roll:%d  Pitch:%d  Yaw:%d\n", 
+    //         //               rx_throttle, rx_roll, rx_pitch, rx_yaw);
+    //     }
+
+    //     motor_update_from_crsf();
+    // }
+
+    // Serial.printf("Control update time: %lu us\n", t2);
+
+    // === METRICS ===
+    //perf.mpu_read_us = imu_read_us;
+    perf.loop_time_us = micros() - loop_start;
+    loops_in_window++;
+
+    // Serial.printf("loop_time_us = %lu\n", perf.loop_time_us);
 }

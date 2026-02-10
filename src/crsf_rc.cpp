@@ -2,6 +2,7 @@
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "config.h"
+#include <Arduino.h>
 
 static uint8_t rx_buffer[128];
 static int16_t channels[16];
@@ -21,6 +22,7 @@ void crsf_init()
     if (ret != ESP_OK)
     {
         ESP_LOGE("CRSF", "uart_param_config failed: %s", esp_err_to_name(ret));
+        //Serial.println("CRSF UART param config failed");
         return;
     }
 
@@ -28,6 +30,7 @@ void crsf_init()
     if (ret != ESP_OK)
     {
         ESP_LOGE("CRSF", "uart_set_pin failed: %s", esp_err_to_name(ret));
+        //Serial.println("CRSF UART set pin failed");
         return;
     }
 
@@ -35,11 +38,13 @@ void crsf_init()
     if (ret != ESP_OK)
     {
         ESP_LOGE("CRSF", "uart_driver_install failed: %s", esp_err_to_name(ret));
+        //Serial.println("CRSF UART driver install failed");
         return;
     }
 
     crsf_initialized = true;
     ESP_LOGI("CRSF", "CRSF UART initialized at %d buad", CRSF_BAUD_RATE);
+    Serial.printf("CRSF UART initialized at %d baud\n", CRSF_BAUD_RATE);
 }
 
 void crsf_update()
@@ -47,10 +52,12 @@ void crsf_update()
     if (!crsf_initialized)
     {
         ESP_LOGW("CRSF", "crsf not initialized, skipping read.");
+        Serial.println("CRSF not initialized, skipping read.");
         return;
     }
     
     int len = uart_read_bytes(CRSF_UART_NUM, rx_buffer, sizeof(rx_buffer), 10 / portTICK_PERIOD_MS);
+    //Serial.printf("length of bytes: %d\n", len);
     if (len <= 0) return;
 
     // search for valid CRSF frame
@@ -62,7 +69,7 @@ void crsf_update()
             if (i + frame_len + 2 > len) continue;
 
             uint8_t type = rx_buffer[i + 2];
-            //printf("Frame: SYNC 0xC8, len=%d, type=0x%02X\n", len, type);
+            //Serial.printf("Frame: SYNC 0xC8, len=%d, type=0x%02X\n", len, type);
             if (type == 0x16) // RC channels frame
             {
                 uint8_t *payload = &rx_buffer[i + 3]; // start of channel data

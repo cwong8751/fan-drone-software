@@ -23,6 +23,7 @@
 // - CRSF -
 #define CRSF_TX_PIN 43
 #define CRSF_RX_PIN 44
+#define CRSF_UART_NUM UART_NUM_0
 // --- OTHER ---
 #define RGB_PIN 38
 
@@ -34,6 +35,7 @@
 #define SERVO4_CHANNEL 4
 
 // == MISC ==
+#define GYRO_SCALE_Q15 2294
 #define BAUD_RATE 115200
 #define CRSF_BAUD_RATE 420000
 #define ALPHA 0.98f
