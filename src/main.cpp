@@ -104,52 +104,27 @@ void updateServer()
                             client.println();
                             break;
                         }
-                        else
+                        else if (header.indexOf("GET / ") >= 0)
                         {
-                            client.println("HTTP/1.1 200 OK");
-                            client.println("Content-type:text/html");
-                            client.println("Connection: close");
-                            client.println();
-                            client.println("<!DOCTYPE html><html>");
-                            client.println("<head>");
-                            client.println("<meta name='viewport' content='width=device-width, initial-scale=1'>");
-                            client.println("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>");
-                            client.println("<style>");
-                            client.println("body { font-family: Helvetica; text-align: center; margin: 20px; }");
-                            client.println("canvas { max-width: 100%; height: auto; }");
-                            client.println("</style>");
-                            client.println("</head>");
-                            client.println("<body>");
-                            client.println("<h1>ESP32 Orientation Plot</h1>");
-                            client.println("<canvas id='chart' width='400' height='200'></canvas>");
-                            client.println("<script>");
-                            client.println("const ctx = document.getElementById('chart').getContext('2d');");
-                            client.println("const chart = new Chart(ctx, {type: 'line', data: {");
-                            client.println("labels: [], datasets: [");
-                            client.println("{label:'Roll', borderColor:'red', fill:false, data:[]},");
-                            client.println("{label:'Pitch', borderColor:'green', fill:false, data:[]},");
-                            client.println("{label:'Yaw', borderColor:'blue', fill:false, data:[]}");
-                            client.println("]}, options: {");
-                            client.println("responsive: true, animation: false,");
-                            client.println("scales: {y: {min:-180, max:180, title:{display:true, text:'Degrees'}}}");
-                            client.println("}});");
-                            client.println("function fetchData(){fetch('/data').then(r=>r.json()).then(d=>{");
-                            client.println("const t = new Date().toLocaleTimeString();");
-                            client.println("chart.data.labels.push(t);");
-                            client.println("chart.data.datasets[0].data.push(d.roll);");
-                            client.println("chart.data.datasets[1].data.push(d.pitch);");
-                            client.println("chart.data.datasets[2].data.push(d.yaw);");
-                            client.println("if(chart.data.labels.length>50){");
-                            client.println("chart.data.labels.shift();");
-                            client.println("chart.data.datasets.forEach(s=>s.data.shift());}");
-                            client.println("chart.update();");
-                            client.println("});}");
-                            client.println("setInterval(fetchData, 500);"); // update every 0.5 sec
-                            client.println("</script>");
-                            client.println("</body></html>");
-                            client.println();
-                            break;
+                            File file = SPIFFS.open("/dashboard.html", "r");
+                            if (!file) {
+                                client.println("HTTP/1.1 404 Not Found");
+                                client.println("Content-type: text/html");
+                                client.println();
+                                client.println("<!DOCTYPE html><html><body><h1>404 - File Not Found</h1></body></html>");
+                            } else {
+                                client.println("HTTP/1.1 200 OK");
+                                client.println("Content-type: text/html");
+                                client.println("Connection: close");
+                                client.println();
+                                
+                                while (file.available()) {
+                                    client.write(file.read());
+                                }
+                                file.close();
+                            }
                         }
+                        break;
                     }
                     else
                     { // if you got a newline, then clear currentLine
